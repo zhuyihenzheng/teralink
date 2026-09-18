@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+artifacts/
+*.user
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.pfx
+*.p12
+connections.json
+connections.lock
+sessions/
