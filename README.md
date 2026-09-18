@@ -12,6 +12,26 @@
 - **自带运行时包 `TeraLink-win-x64.zip`**：完整解压后运行，无需另装 .NET。不要只取出 EXE。
 - Tera Term 另行安装，使用官方 5.x，目录中需同时有 `ttermpro.exe` 和 `ttpmacro.exe`。RDP 使用系统客户端，无需安装 Tera Term。
 
+### 下载后先解除锁定
+
+本工具**没有代码签名**。浏览器下载的 ZIP 会被 Windows 打上来源标记，解压时这个标记会传给解压出来的每个文件，运行 `TeraLink.exe` 就会出现蓝色的「Windows 已保护你的电脑」。**先解除锁定、再解压**可以避免这个提示：
+
+1. 右键点击下载好的 `.zip` → **属性** → 勾选底部的 **解除锁定** → 确定。
+2. 然后再解压，运行 `TeraLink.exe`。
+
+PowerShell 等效操作：
+
+```powershell
+Get-FileHash .\TeraLink-win-x64.zip -Algorithm SHA256   # 先与发布页公布的哈希核对
+Unblock-File .\TeraLink-win-x64.zip
+```
+
+已经解压过的，对解压目录执行 `Get-ChildItem -Recurse | Unblock-File` 同样有效。
+
+解除锁定等于跳过 Windows 的来源检查，**请只对核对过 SHA256 的文件这么做**。已经看到提示时，点 **更多信息 → 仍要运行** 也可以继续，确认过一次后不再重复询问。
+
+Windows 11 开启**智能应用控制（Smart App Control）** 时，未签名程序会被直接阻止，解除锁定无效；只能等代码签名，或在系统设置中关闭该功能（关闭后除非重装系统否则无法再开启）。
+
 ### 使用已有远程桌面连接
 
 1. 新增连接，类型选择 **Windows 远程桌面 · RDP**。
@@ -60,6 +80,8 @@ dotnet run --project tests/TeraLink.Checks -c Release
 .\build.ps1 -SelfContained  # 完整包，自带运行时
 # ARM64：追加 -Runtime win-arm64
 ```
+
+构建结束会打印 ZIP 的 SHA256，并写入同名 `.sha256` 文件，发布时请一并公布。持有代码签名证书时追加 `-CertificateThumbprint <指纹>`，打包前会用 Windows SDK 的 `signtool` 对 `TeraLink.exe` 和自身的 DLL 做 SHA256 签名并加时间戳；不传该参数则产出未签名包。签名是消除 SmartScreen 提示的唯一根本手段，解除锁定只是绕开本机的来源标记。
 
 详见 [验证记录](QA.md) 和 [Windows 验收清单](WINDOWS-ACCEPTANCE.md)。构建通过不等于 Windows 端到端通过。
 

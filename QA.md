@@ -25,3 +25,12 @@
 - 已核对现有 Windows 完整包、轻量包及源码包的 SHA256 和 ZIP 完整性；源码包中的 C# 文件与当前源码一致。
 - 本次公开发布沿用 2026-09-12 的构建产物。尝试重新运行检查时，临时目录中的 .NET SDK 已缺少 `Sdk.props` 等组件，未完成重新构建或测试；不把此前的通过记录视为本次重新执行。
 - 排除构建缓存、运行时连接数据和本地环境文件。现有 Windows 实机验收限制保持不变。
+
+## 2026-09-18 SmartScreen 拦截处理
+
+- 症状确认为蓝色「Windows 已保护你的电脑」，即 SmartScreen 对未签名、无声誉且带来源标记（MOTW）的可执行文件的拦截，与实现语言无关。
+- README 增加「下载后先解除锁定」说明：先对 ZIP 解除锁定再解压可避免提示，并要求先核对 SHA256；说明 Smart App Control 下解除锁定无效。
+- 补齐 Win32 版本资源（`Product`、`Company`、`Copyright`、`AssemblyTitle`、`Description`、`FileVersion`），`app.manifest` 版本由 1.0.0.0 对齐为 0.2.0.0。
+- `build.ps1` 增加可选 `-CertificateThumbprint` 签名步骤（`signtool` SHA256 + 时间戳，签名后校验），未签名时输出警告；ZIP 的 SHA256 额外写入 `.sha256` 文件。
+- **本次未执行任何构建或测试。** 当前环境没有 .NET SDK 也没有 PowerShell，`build.ps1` 未做语法检查，版本资源与签名流程需在 Windows 上重新验证。
+- 代码签名证书尚未获取；在签名之前，解除锁定和「更多信息 → 仍要运行」是仅有的规避方式，不能替代签名。

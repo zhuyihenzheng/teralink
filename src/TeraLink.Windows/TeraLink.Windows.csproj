@@ -7,7 +7,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>TeraLink</AssemblyName>
-    <Version>0.2.0</Version>
+    <AssemblyTitle>TeraLink 快捷登录</AssemblyTitle>
+    <Description>Tera Term SSH 与 Windows 远程桌面快捷登录工具</Description>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
