@@ -34,3 +34,14 @@
 - `build.ps1` 增加可选 `-CertificateThumbprint` 签名步骤（`signtool` SHA256 + 时间戳，签名后校验），未签名时输出警告；ZIP 的 SHA256 额外写入 `.sha256` 文件。
 - **本次未执行任何构建或测试。** 当前环境没有 .NET SDK 也没有 PowerShell，`build.ps1` 未做语法检查，版本资源与签名流程需在 Windows 上重新验证。
 - 代码签名证书尚未获取；在签名之前，解除锁定和「更多信息 → 仍要运行」是仅有的规避方式，不能替代签名。
+
+## 2026-09-19 PowerShell 版（ps/）
+
+新增不含 EXE 的实现，只做 Tera Term SSH 连接和登录后自动执行命令；现有 C# 实现未改动。没有编译产物即没有 SmartScreen 拦截，也不需要 .NET 运行时，目标是 Windows 自带的 Windows PowerShell 5.1。
+
+- 沿用 C# 的密码路径：DPAPI 当前用户范围加密，密文格式相同（`ProtectedData.Protect` 与 `CryptProtectData` 一致），`-Import` 可直接读取旧 `connections.json` 中的 SSH 连接且不改动原文件；密码经仅本账户 ACL 的命名管道传给本次宏进程，并用 `GetNamedPipeClientProcessId` 核对 PID；宏先建立 DDE 链接再接收密码。
+- 新增登录后自动执行命令：命令与提示符写入会话目录下的独立文件，由宏在 `connect` 成功后逐条 `wait` + `sendln`；命令不是秘密，但**以明文保存**，已在文档中说明不要写入密码。
+- 已执行：`pwsh 7.4.6 (Linux)` 下 `ps/TeraLink.Tests.ps1` 34 项通过，覆盖主机名校验、连接参数拼接与引号转义、511 UTF-8 字节边界、命令行控制字符拒绝、命令文件格式、宏生成与伪造管道名/路径引号拒绝。三个 `.ps1` 均带 UTF-8 BOM，避免 Windows PowerShell 5.1 按 ANSI 解码中文。
+- **尚未执行**：Windows 上的任何实机运行。DPAPI 往返、`PipeSecurity` 构造、`Add-Type` P/Invoke、`Process.Start` 与 `Handle` 等待、ttpmacro 实际读取管道与命令文件均未验证。
+- **风险最高的未验证点**：宏中 `wait prompt`（对字符串变量求值）和 `filereadln` 逐行读取命令文件的行为，均依据 Tera Term 宏文档推断，需在真实 Tera Term 5.x 上确认。提示符等待失败时报 `commands-timeout` 并保留终端。
+- Windows PowerShell 5.1 的默认执行策略为 Restricted，因此入口 `TeraLink.cmd` 使用 `-ExecutionPolicy Bypass`，仅作用于其启动的单个进程，不修改系统策略；文档同时给出不使用该方式的替代步骤。

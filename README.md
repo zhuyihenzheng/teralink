@@ -11,6 +11,7 @@
 - **轻量包 `TeraLink-win-x64-lite.zip`**：完整解压后运行 `TeraLink.exe`。电脑需已有 **.NET 10 Windows Desktop Runtime x64**（仅装普通 .NET Runtime 不够）。
 - **自带运行时包 `TeraLink-win-x64.zip`**：完整解压后运行，无需另装 .NET。不要只取出 EXE。
 - Tera Term 另行安装，使用官方 5.x，目录中需同时有 `ttermpro.exe` 和 `ttpmacro.exe`。RDP 使用系统客户端，无需安装 Tera Term。
+- **只用 SSH 的话**：`ps/` 下有一个不含 EXE 的 PowerShell 版本，只做 Tera Term 连接和登录后自动执行命令，不触发 SmartScreen，也不需要 .NET 运行时。见 [ps/README.md](ps/README.md)。
 
 ### 下载后先解除锁定
 
