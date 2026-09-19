@@ -1,0 +1,82 @@
+; =============================================================
+; TeraLink 极简版 —— 打开 Tera Term、输入用户名密码、执行自定义命令
+;
+; 用法：复制这个文件，改成自己的主机名，改下面「改这里」的四行，
+;       再把命令换成自己的，然后双击运行。
+;       （装完 Tera Term 后，.ttl 文件默认就由 ttpmacro.exe 打开。）
+;
+; 密码每次运行时弹窗输入，不保存在任何文件里。
+; =============================================================
+
+; ---------------- 改这里 ----------------
+HOSTNAME = '192.0.2.10'
+PORTNO   = '22'
+USERNAME = 'myname'
+; 登录后等待的提示符。每条命令都会等到它出现再发下一条。
+PROMPT   = '$'
+; 等待提示符的秒数。
+timeout = 30
+; ----------------------------------------
+
+
+; 先只启动 Tera Term，不带任何连接参数，建立 DDE 链接。
+; 这样下面的密码走 DDE 传给它，不会出现在进程命令行里 —— 直接把密码
+; 写进 connect 参数去启动新进程的话，任务管理器里就能看到密码。
+connect '/DS'
+testlink
+if result <> 1 goto linkfailed
+
+passwordbox '请输入密码：' 'TeraLink'
+strlen inputstr
+if result = 0 goto cancelled
+
+; 拼接连接参数。注意：密码里如果含英文双引号，这个模板不适用。
+COMMAND = HOSTNAME
+strconcat COMMAND ' /P='
+strconcat COMMAND PORTNO
+strconcat COMMAND ' /ssh /2 /auth=password /user="'
+strconcat COMMAND USERNAME
+strconcat COMMAND '" /passwd="'
+strconcat COMMAND inputstr
+strconcat COMMAND '"'
+
+; 再确认一次链接还在，绝不用带密码的参数去启动新进程。
+testlink
+if result <> 1 goto linkfailed
+
+connect COMMAND
+COMMAND = ''
+inputstr = ''
+if result <> 2 goto connectfailed
+
+
+; ================= 自定义命令 =================
+; 一条命令两行：先 wait 等提示符，再 sendln 发命令。
+; 要加命令就照着复制两行。要删就整两行删掉。
+
+wait PROMPT
+sendln 'cd /var/log'
+
+wait PROMPT
+sendln 'ls -la'
+
+; ==============================================
+
+; 宏到此结束，终端保持打开，可以继续手动操作。
+end
+
+
+:linkfailed
+messagebox '没能连上 Tera Term。请确认 ttermpro.exe 和 ttpmacro.exe 在同一目录下。' 'TeraLink'
+end
+
+:cancelled
+COMMAND = ''
+inputstr = ''
+end
+
+:connectfailed
+COMMAND = ''
+inputstr = ''
+messagebox '登录没有完成。请看终端窗口里的网络、认证或主机指纹提示。' 'TeraLink'
+end
