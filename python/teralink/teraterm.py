@@ -166,9 +166,37 @@ def _failure(message: str, lines, last: str, session: str) -> OSError:
     return OSError("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
 
 
+def _short_path(path: str) -> str:
+    try:
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetShortPathNameW(path, buffer, len(buffer)):
+            return buffer.value
+    except Exception:
+        pass
+    return path
+
+
+def session_root() -> str:
+    """Folder for the macro and its report. TTL file commands fail on non-ASCII paths (e.g. a Japanese or
+    Chinese user name in %LOCALAPPDATA%), so fall back to the 8.3 short path, then to ProgramData.
+    The folder never holds credentials: only the macro text and stage names."""
+    root = os.path.join(data_dir(), "sessions")
+    os.makedirs(root, exist_ok=True)
+    if root.isascii():
+        return root
+    short = _short_path(root)
+    if short.isascii():
+        return short
+    fallback = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "TeraLink", "sessions",
+                            os.environ.get("USERNAME", "user").encode("ascii", "replace").decode().replace("?", "_"))
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
 def cleanup_sessions(max_age_seconds: float = 7 * 86400) -> None:
     """Failed launches keep their (credential-free) folder for diagnosis; drop old ones."""
-    root = os.path.join(data_dir(), "sessions")
+    root = session_root()
     if not os.path.isdir(root):
         return
     now = time.time()
@@ -194,7 +222,7 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
     password = vault.unprotect(connection.protected_password)
     payload = bytearray((connection.macro_connect_command(password) + "\r\n").encode("utf-8"))
     password = ""
-    session = os.path.join(data_dir(), "sessions", os.urandom(16).hex())
+    session = os.path.join(session_root(), os.urandom(16).hex())
     macro = None
     pipe = None
     succeeded = False
