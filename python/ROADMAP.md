@@ -10,15 +10,30 @@
 
 ## 现状（0.3.0 alpha）
 
-| 部分 | 状态 |
-|---|---|
-| 数据模型、校验、旧版数据导入 | 单元测试覆盖 |
-| WAR 打包、任务执行、停止、多行命令 | 单元测试覆盖（Linux） |
-| 界面流程（新增/编辑/删除、模板、导出导入、运行） | 假 tkinter 冒烟测试，布局未看过 |
-| DPAPI、命名管道、Tera Term 宏、mstsc | 只按 C# 版逐行移植，**未在 Windows 运行** |
-| paramiko 上传和服务器命令 | 只测了调用流程，**未连过真实服务器** |
+GitHub Actions（`.github/workflows/python.yml`）在每次推送时自动验证：
 
-运行测试：`cd python && python -m unittest discover -s tests`
+| 部分 | 怎么验证的 | 结果 |
+|---|---|---|
+| 数据模型、校验、旧版导入、WAR 打包、任务执行 | 单元测试（Linux / macOS / Windows） | ✅ |
+| DPAPI 加密、`msvcrt` 单实例锁、cmd 多行命令与中文输出、停止任务（taskkill） | windows-latest，Python 3.8 与 3.12 | ✅ |
+| 命名管道：仅当前用户、PID 校验、同名拒绝、无人连接时关闭不卡死 | windows-latest | ✅ |
+| 真 Tera Term 5.7：宏通过 DDE 附着并从管道读到连接命令，会话目录被清理 | windows-latest（官方 portable zip） | ✅ |
+| RDP 连接文件：UTF-16 BOM、`password 51` 加密 | windows-latest（mstsc 调用被替换） | ✅ |
+| 真 tkinter：主窗口和所有对话框能建出来、能保存 | windows-latest + macOS；截图在 Actions 的 `windows-screenshots` | ✅ |
+| paramiko：指纹确认一次后记住（非 22 端口）、拒绝指纹、错误密码、上传+备份+改名、上传中途停止不留 `.part`、WAR→上传→远程命令整条任务 | ubuntu-latest 上真实 sshd | ✅ |
+
+仍未验证（需要公司电脑或 Windows 虚拟机）：
+
+- Tera Term **真正登录成功**（含首次主机指纹弹窗）和输错密码时的表现
+- mstsc 真正连上远程桌面
+- 公司代理 / 白名单环境下 `install-deps.bat` 和 paramiko 能否加载
+- 日文 / 中文 Windows 上本地命令输出编码（CI 是英文系统）
+
+运行测试：`cd python && python -m unittest discover -s tests`。设置 `TERALINK_SSH_TEST_HOST` 等环境变量可对真实服务器跑 `test_integration_ssh.py`（见文件开头说明）。
+
+### 已知限制
+
+- 只支持 **Tera Term 5.x**。chocolatey 等渠道默认仍是 4.108，公司电脑上很可能是 4.x，届时会提示版本不符。是否放宽到 4.x 需要先验证 4.x 的宏编码（报告路径含非 ASCII 用户名时）。
 
 ## Windows 实机验收清单
 
