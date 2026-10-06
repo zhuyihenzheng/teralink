@@ -1,5 +1,7 @@
 # TeraLink — Tera Term / RDP 快捷登录
 
+> **公司电脑不能运行 exe？** 用 [Python 版](python/README.md)：双击 `TeraLink.bat` 启动，功能相同，另外支持打包 WAR、上传到 Linux 服务器、执行服务器命令。
+
 **0.2.0 alpha，Windows x64。** 保存连接和加密密码，打开 Tera Term 自动提交 SSH 登录，或使用 Windows 自带 `mstsc.exe` 打开远程桌面。支持沿用已有 `.rdp` 文件。
 
 [下载 Windows 版（预发布）](https://github.com/zhuyihenzheng/teralink/releases/tag/v0.2.0-alpha) · [源码仓库](https://github.com/zhuyihenzheng/teralink)

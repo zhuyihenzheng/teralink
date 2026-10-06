@@ -11,3 +11,7 @@ Thumbs.db
 connections.json
 connections.lock
 sessions/
+__pycache__/
+*.pyc
+python/wheels/
+python/python/
