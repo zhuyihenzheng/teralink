@@ -40,6 +40,8 @@ jobs:
       - name: Install paramiko the way install-deps.bat does
         run: python -m pip install --user -r requirements.txt
       - name: Tests (core, UI smoke, Windows-only)
+        env:
+          TERALINK_MACRO_VISIBLE: "1"
         run: |
           python -m pip install pillow
           python -m unittest discover -s tests -v

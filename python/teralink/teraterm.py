@@ -126,11 +126,15 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "usesudo = 0",
            "sudopw = ''",
            "filereadln channel command",
-           "received = result",
-           "filereadln channel sudoline",
-           "if result <> 0 received = 1",
-           "filereadln channel countline",
-           "if result <> 0 received = 1",
+           "received = result"]
+        + mark("read-sudo")
+        + ["filereadln channel sudoline",
+           "if result <> 0 received = 1"]
+        + mark("read-count")
+        + ["filereadln channel countline",
+           "if result <> 0 received = 1"]
+        + mark("read-commands")
+        + [
            "str2int ncmds countline",
            "if result = 0 ncmds = 0",
            "if ncmds > %d ncmds = %d" % (MAX_AFTER_LOGIN, MAX_AFTER_LOGIN),
@@ -313,7 +317,8 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
                           "指向一个普通文件夹（例如 C:\\TeraLinkData）。" % script)
         log("Tera Term：%s（版本 %s）" % (executable, _file_major_version(executable) or "未知"))
         log("宏：%s" % script)
-        macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe"), "/V", script], cwd=folder)
+        hidden = [] if os.environ.get("TERALINK_MACRO_VISIBLE") == "1" else ["/V"]  # visible: for debugging
+        macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe")] + hidden + [script], cwd=folder)
 
         while not pipe.connected.is_set():
             _check(cancel, deadline)
