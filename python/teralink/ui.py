@@ -18,6 +18,7 @@ from .model import (KIND_RDP, KIND_SSH, STEP_LABELS, STEP_LOCAL, STEP_REMOTE, ST
 from .paths import data_dir, legacy_data_file, log_dir
 
 KIND_LABELS = {KIND_SSH: "Tera Term · SSH", KIND_RDP: "Windows 远程桌面 · RDP"}
+_TEXT_STYLE = {"relief": "solid", "borderwidth": 1, "highlightthickness": 0, "undo": True}
 VARIABLE_HELP = ("可用变量：${ARTIFACT} 上一步生成/上传的本地文件，${REMOTE_FILE} 上一次上传到服务器的路径，"
                  "${NOW} 时间戳 20261006-153000，${TODAY} 日期，${TASK} 任务名。")
 
@@ -228,31 +229,32 @@ class ConnectionsTab(ttk.Frame):
         right = ttk.Frame(self, padding=(16, 0, 0, 0), width=360)
         right.pack(side="left", fill="y")
         right.pack_propagate(False)
+        # Bottom row first (side="bottom") so settings stay visible however tall the details get.
+        self.path_label = ttk.Label(right, text="", style="Muted.TLabel", wraplength=340)
+        self.path_label.pack(side="bottom", anchor="w", pady=(6, 0))
+        more = ttk.Frame(right)
+        more.pack(side="bottom", anchor="w", pady=(6, 0))
+        ttk.Button(more, text="Tera Term 路径…", command=self.configure_teraterm).pack(side="left", padx=(0, 6))
+        ttk.Button(more, text="导入旧版连接", command=lambda: self.app.offer_legacy_import()).pack(side="left")
+        ttk.Checkbutton(right, text="连接后退出启动器", variable=self.exit_after,
+                        command=self.save_exit_after).pack(side="bottom", anchor="w")
         self.title = ttk.Label(right, text="", style="Title.TLabel", wraplength=340)
         self.title.pack(anchor="w")
-        self.details = ttk.Label(right, text="", wraplength=340, justify="left")
-        self.details.pack(anchor="w", pady=(8, 12))
         actions = ttk.Frame(right)
-        actions.pack(anchor="w", fill="x")
+        actions.pack(anchor="w", fill="x", pady=(8, 0))
         self.connect_button = ttk.Button(actions, text="连接 →", style="Accent.TButton", command=self.connect)
         self.connect_button.pack(side="left")
         self.cancel_button = ttk.Button(actions, text="停止等待", command=self.cancel)
         buttons = ttk.Frame(right)
-        buttons.pack(anchor="w", pady=(10, 0))
+        buttons.pack(anchor="w", pady=(8, 0))
         self.new_button = ttk.Button(buttons, text="＋ 新增", command=lambda: self.edit_connection(None))
         self.edit_button = ttk.Button(buttons, text="编辑", command=lambda: self.edit_connection(self.selected()))
         self.fav_button = ttk.Button(buttons, text="收藏", command=self.toggle_favorite)
         self.delete_button = ttk.Button(buttons, text="删除", command=self.delete)
         for button in (self.new_button, self.edit_button, self.fav_button, self.delete_button):
             button.pack(side="left", padx=(0, 6))
-        ttk.Checkbutton(right, text="连接后退出启动器", variable=self.exit_after,
-                        command=self.save_exit_after).pack(anchor="w", pady=(14, 0))
-        more = ttk.Frame(right)
-        more.pack(anchor="w", pady=(10, 0))
-        ttk.Button(more, text="Tera Term 路径…", command=self.configure_teraterm).pack(side="left", padx=(0, 6))
-        ttk.Button(more, text="导入旧版连接", command=lambda: self.app.offer_legacy_import()).pack(side="left")
-        self.path_label = ttk.Label(right, text="", style="Muted.TLabel", wraplength=340)
-        self.path_label.pack(anchor="w", pady=(10, 0))
+        self.details = ttk.Label(right, text="", wraplength=340, justify="left")
+        self.details.pack(anchor="w", pady=(12, 0))
         self.refresh()
 
     def selected(self) -> Optional[Connection]:
@@ -289,10 +291,10 @@ class ConnectionsTab(ttk.Frame):
         else:
             self.title.configure(text=c.name)
             last = c.last_launched[:16].replace("T", " ") if c.last_launched else "尚未连接"
-            self.details.configure(text="%s  ·  %s\n\n主机地址\n%s:%d\n\n登录用户\n%s\n\n密码\n已加密保存 · Windows 当前账户"
-                                        "\n\n上次连接\n%s\n\n备注\n%s" % (
+            self.details.configure(text="%s  ·  %s\n\n主机：%s:%d\n用户：%s\n密码：已加密保存（Windows 当前账户）"
+                                        "\n上次连接：%s\n\n%s" % (
                                             KIND_LABELS[c.kind], c.group or "未分组", c.host, c.port, c.username,
-                                            last, c.notes or "—"))
+                                            last, ("备注：" + c.notes) if c.notes else ""))
         state = "!disabled" if c is not None and not busy else "disabled"
         for button in (self.connect_button, self.edit_button, self.fav_button, self.delete_button):
             button.state([state])
@@ -697,10 +699,10 @@ class _Dialog(tk.Toplevel):
         if previous is not None and previous.winfo_exists():
             previous.grab_set()
 
-    def field(self, label: str, widget, hint: str = "", parent=None) -> None:
+    def field(self, label: str, widget, hint: str = "", parent=None, sticky: str = "ew") -> None:
         parent = parent or self.body
         ttk.Label(parent, text=label).grid(row=self.row, column=0, sticky="nw", padx=(0, 10), pady=4)
-        widget.grid(row=self.row, column=1, sticky="ew", pady=4)
+        widget.grid(row=self.row, column=1, sticky=sticky, pady=4)
         self.row += 1
         if hint:
             ttk.Label(parent, text=hint, style="Muted.TLabel", wraplength=420, justify="left").grid(
@@ -752,7 +754,7 @@ class ConnectionDialog(_Dialog):
         self.field("密码", ttk.Entry(self.body, textvariable=self.password, show="●"),
                    "编辑时留空表示保留原密码" if connection else "")
         self.field("分组", ttk.Entry(self.body, textvariable=self.group), "例如 开发环境 / 生产环境")
-        self.notes = tk.Text(self.body, height=4, wrap="word")
+        self.notes = tk.Text(self.body, height=4, wrap="word", **_TEXT_STYLE)
         self.notes.insert("1.0", c.notes)
         self.field("备注", self.notes)
         self.full_screen_check = ttk.Checkbutton(self.body, text="远程桌面全屏", variable=self.full_screen)
@@ -846,7 +848,7 @@ class TaskDialog(_Dialog):
         self.name = tk.StringVar(value=t.name)
         self.confirm = tk.BooleanVar(value=t.confirm)
         self.field("任务名称", ttk.Entry(self.body, textvariable=self.name))
-        self.description = tk.Text(self.body, height=3, wrap="word")
+        self.description = tk.Text(self.body, height=3, wrap="word", **_TEXT_STYLE)
         self.description.insert("1.0", t.description)
         self.field("说明", self.description)
         self.field("", ttk.Checkbutton(self.body, text="运行前弹出确认（涉及正式环境时建议勾选）", variable=self.confirm))
@@ -866,7 +868,7 @@ class TaskDialog(_Dialog):
         self.tree.bind("<Double-1>", lambda _e: self.edit_step())
         buttons = ttk.Frame(steps_frame)
         buttons.pack(side="left", fill="y", padx=(8, 0))
-        add_button = ttk.Menubutton(buttons, text="＋ 添加")
+        add_button = ttk.Menubutton(buttons, text="＋ 添加", width=8)
         add_menu = tk.Menu(add_button, tearoff=False)
         for step_type in STEP_TYPES:
             add_menu.add_command(label=STEP_LABELS[step_type], command=lambda st=step_type: self.add_step(st))
@@ -958,7 +960,7 @@ class StepDialog(_Dialog):
             self.command = self._text(step.command)
             self.field("命令", self.command, "按 Windows 命令提示符（cmd）执行；多行依次执行，任一行失败就停止。例如：\n"
                                             "mvn -q clean package -DskipTests\ncall build.bat")
-            self.field("", ttk.Button(self.body, text="选择脚本文件…", command=self._pick_script))
+            self.field("", ttk.Button(self.body, text="选择脚本文件…", command=self._pick_script), sticky="w")
             self.field("工作目录", _with_button(self.body, self.vars["cwd"], "浏览…",
                                             lambda: self._pick_dir("cwd")))
         elif step.type == STEP_WAR:
@@ -995,7 +997,7 @@ class StepDialog(_Dialog):
         return "%s（%s@%s:%d）" % (c.name, c.username, c.host, c.port)
 
     def _text(self, value: str) -> tk.Text:
-        widget = tk.Text(self.body, height=6, wrap="none", font=("Consolas", 10))
+        widget = tk.Text(self.body, height=6, wrap="none", font=("Consolas", 10), **_TEXT_STYLE)
         widget.insert("1.0", value)
         return widget
 

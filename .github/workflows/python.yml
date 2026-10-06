@@ -1,0 +1,65 @@
+name: Python edition
+
+on:
+  push:
+    paths: ["python/**", ".github/workflows/python.yml"]
+  pull_request:
+    paths: ["python/**", ".github/workflows/python.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows / Python ${{ matrix.python }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.12"]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: tkinter available
+        run: python -c "import tkinter; print(tkinter.TkVersion)"
+      - name: Install Tera Term (for detection checks)
+        continue-on-error: true
+        run: choco install teraterm -y --no-progress
+      - name: Install paramiko the way install-deps.bat does
+        run: python -m pip install --user -r requirements.txt
+      - name: Tests (core, UI smoke, Windows-only)
+        run: python -m unittest discover -s tests -v
+
+  linux-ssh:
+    name: Linux / real sshd
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start a password-login sshd on port 2222
+        run: |
+          sudo useradd -m -s /bin/bash deploy
+          echo 'deploy:Ci-Pass-123' | sudo chpasswd
+          sudo apt-get install -y -qq openssh-server unzip >/dev/null
+          sudo mkdir -p /run/sshd
+          sudo ssh-keygen -A
+          sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes
+      - run: python -m pip install -r requirements.txt
+      - name: Tests including real SSH / SFTP
+        env:
+          TERALINK_SSH_TEST_HOST: 127.0.0.1
+          TERALINK_SSH_TEST_PORT: "2222"
+          TERALINK_SSH_TEST_USER: deploy
+          TERALINK_SSH_TEST_PASSWORD: Ci-Pass-123
+        run: python -m unittest discover -s tests -v

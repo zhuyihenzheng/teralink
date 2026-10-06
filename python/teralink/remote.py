@@ -78,12 +78,13 @@ def open_session(connection: Connection, confirm: ConfirmHostKey, log: Log) -> S
 
 if paramiko is not None:  # pragma: no cover - exercised on Windows with paramiko installed
     class _ConfirmPolicy(paramiko.MissingHostKeyPolicy):
-        def __init__(self, confirm: ConfirmHostKey, port: int, path: str):
-            self.confirm, self.port, self.path = confirm, port, path
+        def __init__(self, confirm: ConfirmHostKey, host: str, port: int, path: str):
+            self.confirm, self.host, self.port, self.path = confirm, host, port, path
 
         def missing_host_key(self, client, hostname, key):
+            # paramiko passes "[host]:port" for non-22 ports; that is also the right known_hosts key.
             fingerprint = sha256_fingerprint(key.asbytes())
-            if not self.confirm(hostname, self.port, key.get_name(), fingerprint):
+            if not self.confirm(self.host, self.port, key.get_name(), fingerprint):
                 raise RemoteError("未信任服务器指纹，已取消连接。")
             client.get_host_keys().add(hostname, key.get_name(), key)
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -97,7 +98,7 @@ class ParamikoSession(Session):
         client = paramiko.SSHClient()
         if os.path.exists(path):
             client.load_host_keys(path)
-        client.set_missing_host_key_policy(_ConfirmPolicy(confirm, connection.port, path))
+        client.set_missing_host_key_policy(_ConfirmPolicy(confirm, connection.host, connection.port, path))
         log("连接 %s@%s:%d …" % (connection.username, connection.host, connection.port))
         password = vault.unprotect(connection.protected_password)
         try:
