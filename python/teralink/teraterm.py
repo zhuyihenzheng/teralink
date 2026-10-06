@@ -129,17 +129,18 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "received = result",
            "filereadln channel sudoline",
            "if result <> 0 received = 1",
-           ":readcmds",
-           "if received <> 0 goto readdone",
-           "filereadln channel line",
-           "if result <> 0 goto readdone",
-           "strlen line",
-           "if result = 0 goto readdone",
-           "if ncmds >= %d goto readdone" % MAX_AFTER_LOGIN,
-           "cmds[ncmds] = line",
-           "ncmds = ncmds + 1",
-           "goto readcmds",
-           ":readdone",
+           "filereadln channel countline",
+           "if result <> 0 received = 1",
+           "str2int ncmds countline",
+           "if result = 0 ncmds = 0",
+           "if ncmds > %d ncmds = %d" % (MAX_AFTER_LOGIN, MAX_AFTER_LOGIN),
+           "if received <> 0 ncmds = 0",
+           "i = 0",
+           "while i < ncmds",
+           "  filereadln channel line",
+           "  cmds[i] = line",
+           "  i = i + 1",
+           "endwhile",
            "fileclose channel",
            "line = ''",
            "if received <> 0 goto failed",
@@ -332,8 +333,8 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
         if commands:
             log("登录后将依次执行 %d 条命令%s。" % (len(commands), "（sudo 密码提示时自动输入）"
                                                  if connection.sudo_auto_password else ""))
-        # Each after-login command may wait up to ~30 s for its prompt.
-        deadline = max(deadline, time.monotonic() + 60 + 30 * len(commands))
+        if commands:  # each after-login command may wait up to ~30 s for its prompt
+            deadline = max(deadline, time.monotonic() + 60 + 30 * len(commands))
         while macro.poll() is None:
             _check(cancel, deadline)
             time.sleep(0.1)
