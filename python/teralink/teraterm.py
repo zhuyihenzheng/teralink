@@ -138,19 +138,25 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "str2int ncmds countline",
            "if result = 0 ncmds = 0",
            "if ncmds > %d ncmds = %d" % (MAX_AFTER_LOGIN, MAX_AFTER_LOGIN),
-           "if received <> 0 ncmds = 0",
-           "i = 0",
+           "if received <> 0 ncmds = 0"]
+        + mark("dbg-count-ok")
+        + ["i = 0",
            "while i < ncmds",
            "  filereadln channel line",
            "  cmds[i] = line",
            "  i = i + 1",
-           "endwhile",
-           "fileclose channel",
+           "endwhile"]
+        + mark("dbg-loop-ok")
+        + ["fileclose channel"]
+        + mark("dbg-closed")
+        + [
            "line = ''",
            "if received <> 0 goto failed",
            "strlen command",
            "if result = 0 goto failed",
-           "strcopy sudoline 1 1 sudoflag",
+           "strcopy sudoline 1 1 sudoflag"]
+        + mark("dbg-flag")
+        + [
            "strcmp sudoflag '1'",
            "if result = 0 then",
            "  usesudo = 1",
