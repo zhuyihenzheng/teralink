@@ -1,0 +1,3 @@
+# Optional: SSH/SFTP for "upload to server" and "server command" task steps (password login + host key check).
+# Without it the tool falls back to Windows OpenSSH (ssh.exe / scp.exe), which needs SSH keys.
+paramiko>=3.0

@@ -1,0 +1,99 @@
+name: Python edition
+
+on:
+  push:
+    paths: ["python/**", ".github/workflows/python.yml"]
+  pull_request:
+    paths: ["python/**", ".github/workflows/python.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows / Python ${{ matrix.python }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.12"]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: tkinter available
+        run: python -c "import tkinter; print(tkinter.TkVersion)"
+      - name: Install Tera Term 5 (portable zip from the official release)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v5.7.0 --repo TeraTermProject/teraterm --pattern "teraterm-5.7.0-x64.zip" --dir $env:RUNNER_TEMP
+          Expand-Archive "$env:RUNNER_TEMP\teraterm-5.7.0-x64.zip" -DestinationPath C:\TeraTerm5
+          $exe = Get-ChildItem C:\TeraTerm5 -Recurse -Filter ttermpro.exe | Select-Object -First 1
+          "TERALINK_TEST_TERATERM=$($exe.FullName)" >> $env:GITHUB_ENV
+      - name: Install paramiko the way install-deps.bat does
+        run: python -m pip install --user -r requirements.txt
+      - name: Tests (core, UI smoke, Windows-only)
+        run: python -m unittest discover -s tests -v
+      - name: install-deps.bat (as a user would run it)
+        shell: cmd
+        run: |
+          echo.| install-deps.bat > deps.log 2>&1
+          type deps.log
+          findstr /C:"paramiko" deps.log | findstr /C:"OK"
+      - name: TeraLink.bat starts the UI
+        shell: pwsh
+        run: |
+          cmd /c TeraLink.bat
+          if ($LASTEXITCODE -ne 0) { throw "TeraLink.bat exit code $LASTEXITCODE" }
+          Start-Sleep -Seconds 8
+          $proc = Get-Process pythonw -ErrorAction SilentlyContinue
+          if (-not $proc) { throw "pythonw is not running" }
+          $logs = Join-Path $env:LOCALAPPDATA "TeraLinkPy\logs"
+          if (-not (Test-Path $logs)) { throw "UI did not initialise ($logs missing)" }
+          Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Select-Object -ExpandProperty CommandLine
+          Stop-Process -Name pythonw -Force
+      - name: Screenshots of the real UI
+        if: matrix.python == '3.12'
+        run: |
+          python -m pip install pillow
+          python tests/screenshot_windows.py screenshots
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: windows-screenshots
+          path: python/screenshots
+
+  linux-ssh:
+    name: Linux / real sshd
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start a password-login sshd on port 2222
+        run: |
+          sudo useradd -m -s /bin/bash deploy
+          echo 'deploy:Ci-Pass-123' | sudo chpasswd
+          sudo apt-get install -y -qq openssh-server unzip >/dev/null
+          sudo mkdir -p /run/sshd
+          sudo ssh-keygen -A
+          sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes
+      - run: python -m pip install -r requirements.txt
+      - name: Tests including real SSH / SFTP
+        env:
+          TERALINK_SSH_TEST_HOST: 127.0.0.1
+          TERALINK_SSH_TEST_PORT: "2222"
+          TERALINK_SSH_TEST_USER: deploy
+          TERALINK_SSH_TEST_PASSWORD: Ci-Pass-123
+        run: python -m unittest discover -s tests -v
