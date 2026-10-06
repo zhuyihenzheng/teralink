@@ -142,7 +142,7 @@ class RealSshTests(unittest.TestCase):
             session.upload(local, target_dir, "myapp.war", True, self.lines.append, cancel, password,
                            "tomcat:tomcat")
             self.lines.clear()
-            session.run("stat -c '%%U:%%G %%a %%s' %s; ls -a %s; ls -ld /opt/teralink-ci; ls /tmp | grep -c teralink- || true"
+            session.run("stat -c '%%U:%%G %%a %%s' %s; ls -a %s; ls -ld /opt/teralink-ci; ls /tmp | grep -cE '^teralink-[0-9a-f]{16}$' || true"
                         % (target, target_dir), self.lines.append, cancel)
             text = "\n".join(self.lines)
             self.assertIn("tomcat:tomcat 644 100000", text)
