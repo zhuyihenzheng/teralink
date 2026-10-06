@@ -173,6 +173,84 @@ class TeraTermMacroTests(unittest.TestCase):
 
 
 @unittest.skipUnless(WINDOWS, "Windows only")
+class TeraTermLoginTests(unittest.TestCase):
+    """End to end: real Tera Term 5 logs in to a scripted SSH server, runs after-login commands and
+    answers sudo's password prompt. Needs Tera Term 5 and paramiko."""
+
+    def test_login_after_login_commands_and_sudo(self):
+        try:
+            from fake_ssh_server import FakeSshServer
+        except ImportError:
+            self.skipTest("paramiko not installed")
+        from teralink import teraterm, vault
+        from teralink.model import Connection
+        path = _teraterm_path()
+        if not path or (teraterm._file_major_version(path) or 0) < 5:
+            self.skipTest("Tera Term 5.x not installed")
+        server = FakeSshServer()
+        # Trust the server's key up front so Tera Term shows no fingerprint dialog.
+        folders = [os.path.dirname(path), os.path.join(os.environ.get("APPDATA", ""), "teraterm5")]
+        for folder in folders:
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "ssh_known_hosts"), "a") as handle:
+                handle.write(server.known_hosts_line() + "\n")
+        connection = Connection(name="ci", host="127.0.0.1", port=server.port, username="deploy",
+                                protected_password=vault.protect("Ci-Pass-123"),
+                                after_login="sudo su -\nwhoami\ncd /opt", sudo_auto_password=True)
+        lines = []
+        error = None
+        try:
+            with mock.patch.dict(os.environ, {"TERALINK_DATA_DIR": tempfile.mkdtemp()}), \
+                    mock.patch.object(teraterm, "TIMEOUT_SECONDS", 90):
+                teraterm.launch(path, connection, threading.Event(), lines.append)
+        except Exception as caught:
+            error = caught
+        finally:
+            subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            server.close()
+        report = "\n".join(lines) + "\nerror: %r\nserver events: %r" % (error, server.events)
+        print(report.encode("ascii", "backslashreplace").decode("ascii"))
+        self.assertIsNone(error)
+        self.assertIn(("auth", "deploy", True), server.events)
+        self.assertEqual(server.commands(), ["sudo su -", "whoami", "cd /opt"])
+        self.assertIn(("password", True), server.events, "sudo prompt must be answered")
+        prompts = [event[2] for event in server.events if event[0] == "cmd"]
+        self.assertEqual(prompts, ["$ ", "# ", "# "], "commands after sudo run as root")
+        self.assertNotIn("Ci-Pass-123", server.commands(), "password never typed as a command")
+
+    def test_password_not_sent_without_a_prompt(self):
+        try:
+            from fake_ssh_server import FakeSshServer
+        except ImportError:
+            self.skipTest("paramiko not installed")
+        from teralink import teraterm, vault
+        from teralink.model import Connection
+        path = _teraterm_path()
+        if not path or (teraterm._file_major_version(path) or 0) < 5:
+            self.skipTest("Tera Term 5.x not installed")
+        server = FakeSshServer()
+        with open(os.path.join(os.path.dirname(path), "ssh_known_hosts"), "a") as handle:
+            handle.write(server.known_hosts_line() + "\n")
+        # "sudoedit-like" command that never prompts: the password must not be typed.
+        connection = Connection(name="ci", host="127.0.0.1", port=server.port, username="deploy",
+                                protected_password=vault.protect("Ci-Pass-123"),
+                                after_login="echo sudo is mentioned here", sudo_auto_password=True)
+        try:
+            with mock.patch.dict(os.environ, {"TERALINK_DATA_DIR": tempfile.mkdtemp()}), \
+                    mock.patch.object(teraterm, "TIMEOUT_SECONDS", 90):
+                teraterm.launch(path, connection, threading.Event())
+        finally:
+            subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            server.close()
+        self.assertEqual(server.commands(), ["echo sudo is mentioned here"])
+        self.assertNotIn(("password", True), server.events)
+        self.assertFalse(any("Ci-Pass-123" in str(event) for event in server.events
+                             if event[0] != "auth"), server.events)
+
+
+@unittest.skipUnless(WINDOWS, "Windows only")
 class VisibilityCheckTests(unittest.TestCase):
     def test_cmd_sees_real_files_only(self):
         from teralink import teraterm

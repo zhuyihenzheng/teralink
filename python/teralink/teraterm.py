@@ -15,7 +15,7 @@ import time
 from typing import Callable, Optional
 
 from . import vault
-from .model import Connection
+from .model import MAX_AFTER_LOGIN, Connection
 from .paths import data_dir
 
 TIMEOUT_SECONDS = 120
@@ -83,6 +83,7 @@ STAGE_HINTS = {
     "pipe-read": "宏没有从管道读到连接信息。",
     "relink": "读取连接信息后，宏与 Tera Term 的连接断开了。",
     "connect": "Tera Term 已收到登录信息，但连接未完成：请在 Tera Term 窗口查看网络、指纹或认证提示。",
+    "after-login": "已登录，但执行登录后命令时中断，请在 Tera Term 窗口查看。",
 }
 
 
@@ -120,12 +121,38 @@ def create_macro(pipe_name: str, report_path: str) -> str:
         + ["fileopen channel '\\\\.\\pipe\\%s' 0 1" % pipe_name,
            "if channel = -1 goto failed"]
         + mark("pipe-read")
-        + ["filereadln channel command",
+        + ["strdim cmds %d" % MAX_AFTER_LOGIN,
+           "ncmds = 0",
+           "usesudo = 0",
+           "sudopw = ''",
+           "filereadln channel command",
            "received = result",
+           "filereadln channel sudoline",
+           "if result <> 0 received = 1",
+           ":readcmds",
+           "if received <> 0 goto readdone",
+           "filereadln channel line",
+           "if result <> 0 goto readdone",
+           "strlen line",
+           "if result = 0 goto readdone",
+           "if ncmds >= %d goto readdone" % MAX_AFTER_LOGIN,
+           "cmds[ncmds] = line",
+           "ncmds = ncmds + 1",
+           "goto readcmds",
+           ":readdone",
            "fileclose channel",
+           "line = ''",
            "if received <> 0 goto failed",
            "strlen command",
-           "if result = 0 goto failed"]
+           "if result = 0 goto failed",
+           "strcopy sudoline 1 1 sudoflag",
+           "strcmp sudoflag '1'",
+           "if result = 0 then",
+           "  usesudo = 1",
+           "  strlen sudoline",
+           "  strcopy sudoline 2 result sudopw",
+           "endif",
+           "sudoline = ''"]
         + mark("relink")
         + ["; Recheck after the pipe wait: never launch a fresh process with the secret.",
            "testlink",
@@ -135,9 +162,38 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "command = ''",
            "if result <> 2 goto failed"]
         + mark("connected")
-        + ["end",
+        + ["if ncmds = 0 goto finish"]
+        + mark("after-login")
+        + ["; Type the after-login commands. The sudo password is sent ONLY when a password prompt is seen.",
+           "timeout = 20",
+           "wait '$ ' '# ' '> '",
+           "i = 0",
+           "while i < ncmds",
+           "  sendln cmds[i]",
+           "  if usesudo = 1 then",
+           "    strscan cmds[i] 'sudo'",
+           "    if result > 0 then",
+           "      timeout = 10",
+           "      wait 'assword' 'パスワード' '密码' '$ ' '# '",
+           "      if result >= 1 then",
+           "        if result <= 3 then",
+           "          sendln sudopw",
+           "        endif",
+           "      endif",
+           "    endif",
+           "  endif",
+           "  timeout = 20",
+           "  wait '$ ' '# ' '> '",
+           "  i = i + 1",
+           "endwhile",
+           "timeout = 0"]
+        + mark("done")
+        + [":finish",
+           "sudopw = ''",
+           "end",
            ":failed",
            "command = ''",
+           "sudopw = ''",
            "strconcat stage ':failed'",
            "fileopen report %s 1" % report,
            "if report <> -1 then",
@@ -232,7 +288,7 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
     connection.validate()
     cleanup_sessions()
     password = vault.unprotect(connection.protected_password)
-    payload = bytearray((connection.macro_connect_command(password) + "\r\n").encode("utf-8"))
+    payload = bytearray(connection.macro_payload(password).encode("utf-8"))
     password = ""
     session = os.path.join(session_root(), os.urandom(16).hex())
     macro = None
@@ -271,12 +327,18 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
         _check(cancel, deadline)
         pipe.write(payload)
         log("连接信息已通过本机管道交给宏。")
+        commands = connection.after_login_commands()
+        if commands:
+            log("登录后将依次执行 %d 条命令%s。" % (len(commands), "（sudo 密码提示时自动输入）"
+                                                 if connection.sudo_auto_password else ""))
+        # Each after-login command may wait up to ~30 s for its prompt.
+        deadline = max(deadline, time.monotonic() + 60 + 30 * len(commands))
         while macro.poll() is None:
             _check(cancel, deadline)
             time.sleep(0.1)
         lines, last = read_report(report)
         log("宏结束，退出码 %s，进度：%s" % (macro.returncode, lines))
-        if last != "connected":
+        if "connected" not in lines:
             raise _failure("Tera Term 未完成自动连接。错误密码不会被自动重复提交。", lines, last, session)
         succeeded = True
     finally:

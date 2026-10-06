@@ -30,6 +30,7 @@ STEP_LABELS = {
 }
 
 DATA_VERSION = 1
+MAX_AFTER_LOGIN = 20
 _HOST_RE = re.compile(r"^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.?$")
 
 
@@ -88,6 +89,11 @@ class Connection:
     rdp_file_hash: str = ""
     favorite: bool = False
     last_launched: str = ""
+    after_login: str = ""          # SSH: commands typed into Tera Term after login, one per line
+    sudo_auto_password: bool = False  # answer sudo's password prompt with the login password
+
+    def after_login_commands(self) -> List[str]:
+        return [line.strip() for line in self.after_login.splitlines() if line.strip()]
 
     def validate(self) -> "Connection":
         if not re.fullmatch(r"[0-9a-f]{32}", self.id or ""):
@@ -108,6 +114,9 @@ class Connection:
             raise ValueError("请输入有效的用户名（最多 255 字）。")
         if len(self.group) > 100 or len(self.notes) > 2000:
             raise ValueError("分组最多 100 字，备注最多 2000 字。")
+        commands = self.after_login_commands()
+        if len(commands) > MAX_AFTER_LOGIN or any(_has_control(c) or len(c.encode("utf-8")) > 400 for c in commands):
+            raise ValueError("登录后命令最多 %d 行，每行最多 400 字节，不能包含控制字符。" % MAX_AFTER_LOGIN)
         if not self.protected_password or len(self.protected_password) > 32768:
             raise ValueError("请保存登录密码。")
         if not re.fullmatch(r"[A-Za-z0-9+/=]+", self.protected_password):
@@ -132,6 +141,14 @@ class Connection:
         if len(command.encode("utf-8")) > 511:
             raise ValueError("连接信息过长：Tera Term 宏的连接参数最多 511 个 UTF-8 字节，请缩短主机名、用户名或密码。")
         return command
+
+    def macro_payload(self, password: str) -> str:
+        """Everything the Tera Term macro reads from the pipe, one item per line, ended by an empty line:
+        connect command, sudo answer ("1"+password or "0"), then the after-login commands."""
+        lines = [self.macro_connect_command(password),
+                 ("1" + password) if self.sudo_auto_password and self.after_login_commands() else "0"]
+        lines += self.after_login_commands()
+        return "\r\n".join(lines) + "\r\n\r\n"
 
     def search_text(self) -> str:
         return "\n".join([self.name, self.host, self.username, self.group, self.kind]).lower()

@@ -66,6 +66,23 @@ class ConnectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.macro_connect_command("a" * (512 - overhead))
 
+    def test_after_login_payload(self):
+        c = make_connection(after_login="sudo su -\n\n  cd /opt/tomcat/logs  \n", sudo_auto_password=True)
+        c.validate()
+        payload = c.macro_payload("pw")
+        lines = payload.split("\r\n")
+        self.assertEqual(lines[0], c.macro_connect_command("pw"))
+        self.assertEqual(lines[1:5], ["1pw", "sudo su -", "cd /opt/tomcat/logs", ""])
+        self.assertTrue(payload.endswith("\r\n\r\n"))
+        plain = make_connection(after_login="ls", sudo_auto_password=False).macro_payload("pw")
+        self.assertEqual(plain.split("\r\n")[1], "0", "password is not sent unless sudo auto-answer is on")
+        self.assertEqual(make_connection().macro_payload("pw").split("\r\n")[1], "0")
+
+    def test_after_login_limits(self):
+        for text in ("x\n" * 21, "a" * 401, "bad\tline"):
+            with self.assertRaises(ValueError):
+                make_connection(after_login=text).validate()
+
     def test_macro_only_for_ssh(self):
         with self.assertRaises(ValueError):
             make_connection(kind=KIND_RDP, port=3389).macro_connect_command("x")
@@ -390,7 +407,10 @@ class MacroTests(unittest.TestCase):
 class MacroReportTests(unittest.TestCase):
     def test_every_stage_is_reported_and_parsed(self):
         macro = teraterm.create_macro("TeraLink-" + "b" * 32, "C:\\r.txt")
-        for stage in ("link", "pipe-open", "pipe-read", "relink", "connect", "connected"):
+        self.assertNotIn("sudo su", macro, "commands come through the pipe, never the macro file")
+        self.assertIn("sendln sudopw", macro)
+        self.assertIn("wait 'assword' 'パスワード' '密码' '$ ' '# '", macro)
+        for stage in ("link", "pipe-open", "pipe-read", "relink", "connect", "connected", "after-login", "done"):
             self.assertIn("stage = '%s'" % stage, macro)
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "r.txt")
