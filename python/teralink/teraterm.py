@@ -181,7 +181,9 @@ def visible_to_other_programs(path: str) -> bool:
     """True when a separate, non-Python process sees the file (catches AppData redirection)."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        return subprocess.call(["cmd", "/d", "/c", "if exist \"%s\" (exit 0) else (exit 3)" % path],
+        # A string, not a list: list2cmdline would turn the quotes into \" which cmd does not understand.
+        # Windows paths cannot contain double quotes, so quoting the path is safe.
+        return subprocess.call('cmd /d /c if exist "%s" (exit 0) else (exit 3)' % path,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags) == 0
     except OSError:
         return True  # cannot check; let the macro report instead
