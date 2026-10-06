@@ -402,13 +402,16 @@ class ConnectionsTab(ttk.Frame):
 
         def work():
             error = None
+            self.app.log("══ 连接「%s」 %s@%s:%d（%s）" % (c.name, c.username, c.host, c.port, c.kind.upper()))
             try:
                 if c.kind == KIND_RDP:
                     rdp.launch(c)
                 else:
-                    teraterm.launch(path, c, cancel)
+                    teraterm.launch(path, c, cancel, self.app.log)
+                self.app.log("  完成。")
             except BaseException as caught:
                 error = caught
+                self.app.log("  ✗ %s: %s" % (type(caught).__name__, str(caught).replace("\n", " ")))
             self.app.post("do", lambda: self._connected(c, error))
 
         threading.Thread(target=work, name="teralink-connect", daemon=True).start()

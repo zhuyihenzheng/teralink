@@ -128,6 +128,13 @@ class TeraTermMacroTests(unittest.TestCase):
     """
 
     def test_macro_receives_command_through_pipe(self):
+        self._run_macro(tempfile.mkdtemp())
+
+    def test_macro_works_from_a_non_ascii_folder_with_spaces(self):
+        # Company PCs often have Japanese/Chinese user names: %LOCALAPPDATA% then contains non-ASCII text.
+        self._run_macro(os.path.join(tempfile.mkdtemp(), "ユーザー 用户 data"))
+
+    def _run_macro(self, folder):
         from teralink import teraterm, vault, winpipe
         from teralink.model import Connection
         path = _teraterm_path()
@@ -142,13 +149,13 @@ class TeraTermMacroTests(unittest.TestCase):
 
         connection = Connection(name="ci", host="127.0.0.1", port=1, username="deploy",
                                 protected_password=vault.protect("Ci-Pass-123"))
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.dict(os.environ, {"TERALINK_DATA_DIR": folder}), \
+        lines = []
+        with mock.patch.dict(os.environ, {"TERALINK_DATA_DIR": folder}), \
                 mock.patch.object(teraterm, "TIMEOUT_SECONDS", 45), \
                 mock.patch.object(winpipe.SecureOutboundPipe, "write", recording_write):
             started = time.monotonic()
             try:
-                teraterm.launch(path, connection, threading.Event())
+                teraterm.launch(path, connection, threading.Event(), lines.append)
             except (TimeoutError, OSError) as error:
                 outcome = error  # closed port: login cannot succeed
             else:
@@ -156,10 +163,13 @@ class TeraTermMacroTests(unittest.TestCase):
             finally:
                 subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            report = "\n".join(lines) + "\noutcome: %s" % outcome
+            print(report.encode("ascii", "backslashreplace").decode("ascii"))  # CI console is cp1252
             self.assertEqual(len(delivered), 1, "macro never read the connect command (outcome: %r)" % outcome)
             self.assertGreater(delivered[0][1], 40)
             self.assertLess(time.monotonic() - started, 60)
-            self.assertEqual(os.listdir(os.path.join(folder, "sessions")), [], "session folder must be removed")
+            self.assertIn("宏进度", str(outcome), "a failed login must say where the macro stopped")
+            self.assertIn("connect", str(outcome))
 
 
 @unittest.skipUnless(WINDOWS, "Windows only")

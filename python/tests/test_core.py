@@ -387,6 +387,24 @@ class MacroTests(unittest.TestCase):
                 teraterm.create_macro(pipe, report)
 
 
+class MacroReportTests(unittest.TestCase):
+    def test_every_stage_is_reported_and_parsed(self):
+        macro = teraterm.create_macro("TeraLink-" + "b" * 32, "C:\\r.txt")
+        for stage in ("link", "pipe-open", "pipe-read", "relink", "connect", "connected"):
+            self.assertIn("stage = '%s'" % stage, macro)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "r.txt")
+            self.assertEqual(teraterm.read_report(path), ([], ""))
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("5.7.0 started\nlink\npipe-open\npipe-open:failed\n")
+            lines, last = teraterm.read_report(path)
+            self.assertEqual(last, "pipe-open")
+            self.assertIn(last, teraterm.STAGE_HINTS)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("5.7.0 started\n")
+            self.assertEqual(teraterm.read_report(path)[1], "started")
+
+
 class RemoteHelperTests(unittest.TestCase):
     def test_fingerprint_and_backup_name(self):
         self.assertTrue(remote.sha256_fingerprint(b"key").startswith("SHA256:"))
