@@ -216,10 +216,10 @@ def read_report(path: str):
     return lines, last.replace(":failed", "")
 
 
-def _failure(message: str, lines, last: str, session: str) -> OSError:
+def _failure(message: str, lines, last: str, session: str, kind=OSError) -> OSError:
     hint = STAGE_HINTS.get(last, "")
     detail = "宏进度：%s" % (" → ".join(lines) if lines else "（没有任何记录）")
-    return OSError("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
+    return kind("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
 
 
 def _short_path(path: str) -> str:
@@ -291,6 +291,7 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
     payload = bytearray(connection.macro_payload(password).encode("utf-8"))
     password = ""
     session = os.path.join(session_root(), os.urandom(16).hex())
+    report = ""
     macro = None
     pipe = None
     succeeded = False
@@ -341,6 +342,12 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
         if "connected" not in lines:
             raise _failure("Tera Term 未完成自动连接。错误密码不会被自动重复提交。", lines, last, session)
         succeeded = True
+    except (TimeoutError, Cancelled) as error:
+        lines, last = read_report(report) if report else ([], "")
+        log("宏进度：%s" % (lines or "无"))
+        if isinstance(error, TimeoutError):
+            raise _failure(str(error), lines, last, session, TimeoutError)
+        raise
     finally:
         for index in range(len(payload)):
             payload[index] = 0

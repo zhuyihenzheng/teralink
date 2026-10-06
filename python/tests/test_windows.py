@@ -95,6 +95,17 @@ class RdpLaunchTests(unittest.TestCase):
             self.assertFalse(os.path.exists(args[1]))
 
 
+def _screenshot(name):
+    """Best effort: keep a picture of the desktop (e.g. a Tera Term error dialog) for the CI artifact."""
+    try:
+        from PIL import ImageGrab
+        folder = os.path.join(os.path.dirname(__file__), "..", "screenshots")
+        os.makedirs(folder, exist_ok=True)
+        ImageGrab.grab(all_screens=True).save(os.path.join(folder, "fail-%s.png" % name))
+    except Exception:
+        pass
+
+
 def _teraterm_path():
     from teralink import teraterm
     return os.environ.get("TERALINK_TEST_TERATERM") or teraterm.find_executable()
@@ -205,6 +216,7 @@ class TeraTermLoginTests(unittest.TestCase):
                 teraterm.launch(path, connection, threading.Event(), lines.append)
         except Exception as caught:
             error = caught
+            _screenshot("login")
         finally:
             subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

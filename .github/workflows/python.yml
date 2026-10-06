@@ -40,7 +40,9 @@ jobs:
       - name: Install paramiko the way install-deps.bat does
         run: python -m pip install --user -r requirements.txt
       - name: Tests (core, UI smoke, Windows-only)
-        run: python -m unittest discover -s tests -v
+        run: |
+          python -m pip install pillow
+          python -m unittest discover -s tests -v
       - name: install-deps.bat (as a user would run it)
         shell: cmd
         run: |
@@ -61,11 +63,9 @@ jobs:
           Stop-Process -Name pythonw -Force
       - name: Screenshots of the real UI
         if: matrix.python == '3.12'
-        run: |
-          python -m pip install pillow
-          python tests/screenshot_windows.py screenshots
+        run: python tests/screenshot_windows.py screenshots
       - uses: actions/upload-artifact@v4
-        if: matrix.python == '3.12'
+        if: always() && matrix.python == '3.12'
         with:
           name: windows-screenshots
           path: python/screenshots
