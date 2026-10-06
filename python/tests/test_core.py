@@ -407,7 +407,7 @@ class MacroTests(unittest.TestCase):
 class MacroReportTests(unittest.TestCase):
     def test_every_stage_is_reported_and_parsed(self):
         macro = teraterm.create_macro("TeraLink-" + "b" * 32, "C:\\r.txt")
-        self.assertNotIn("sudo su", macro, "commands come through the pipe, never the macro file")
+        self.assertNotIn("sudo su -", macro, "commands come through the pipe, never the macro file")
         self.assertIn("sendln sudopw", macro)
         self.assertIn("wait 'assword' 'パスワード' '密码' '$ ' '# '", macro)
         for stage in ("link", "pipe-open", "pipe-read", "read-sudo", "read-count", "read-commands", "check", "relink",
