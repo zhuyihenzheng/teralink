@@ -163,7 +163,8 @@ class TeraTermMacroTests(unittest.TestCase):
             finally:
                 subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("\n".join(lines), "\noutcome:", outcome)
+            report = "\n".join(lines) + "\noutcome: %s" % outcome
+            print(report.encode("ascii", "backslashreplace").decode("ascii"))  # CI console is cp1252
             self.assertEqual(len(delivered), 1, "macro never read the connect command (outcome: %r)" % outcome)
             self.assertGreater(delivered[0][1], 40)
             self.assertLess(time.monotonic() - started, 60)
