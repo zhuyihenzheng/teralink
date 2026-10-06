@@ -866,10 +866,10 @@ class TaskDialog(_Dialog):
                                      ("server", "服务器", 140)):
             self.tree.heading(column, text=title)
             self.tree.column(column, width=width, anchor="w", stretch=column == "title")
-        self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda _e: self.edit_step())
         buttons = ttk.Frame(steps_frame)
-        buttons.pack(side="left", fill="y", padx=(8, 0))
+        buttons.pack(side="right", fill="y", padx=(8, 0))  # packed before the table so it is never squeezed
+        self.tree.pack(side="left", fill="both", expand=True)
         add_button = ttk.Menubutton(buttons, text="＋ 添加步骤", width=11)
         add_menu = tk.Menu(add_button, tearoff=False)
         for step_type in STEP_TYPES:
