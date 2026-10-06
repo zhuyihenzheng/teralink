@@ -173,6 +173,17 @@ class TeraTermMacroTests(unittest.TestCase):
 
 
 @unittest.skipUnless(WINDOWS, "Windows only")
+class VisibilityCheckTests(unittest.TestCase):
+    def test_cmd_sees_real_files_only(self):
+        from teralink import teraterm
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "a b 文件.ttl")
+            open(path, "w").close()
+            self.assertTrue(teraterm.visible_to_other_programs(path))
+            self.assertFalse(teraterm.visible_to_other_programs(path + ".missing"))
+
+
+@unittest.skipUnless(WINDOWS, "Windows only")
 class LocalCommandTests(unittest.TestCase):
     def test_cmd_multiline_and_chinese_output(self):
         from teralink import tasks

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from dataclasses import replace
@@ -15,7 +16,7 @@ from . import __version__, rdp, remote, tasks, teraterm, vault
 from .model import (KIND_RDP, KIND_SSH, STEP_LABELS, STEP_LOCAL, STEP_REMOTE, STEP_TYPES, STEP_UPLOAD, STEP_WAR,
                     AppData, Connection, Step, Task, clone_task, import_legacy, merge_connections, new_id, now_iso,
                     validate_host)
-from .paths import data_dir, legacy_data_file, log_dir
+from .paths import data_dir, is_store_python, legacy_data_file, log_dir
 
 KIND_LABELS = {KIND_SSH: "Tera Term · SSH", KIND_RDP: "Windows 远程桌面 · RDP"}
 _TEXT_STYLE = {"relief": "solid", "borderwidth": 1, "highlightthickness": 0, "undo": True}
@@ -87,6 +88,8 @@ class App:
         root.bind("<Control-n>", lambda _e: self.connections_tab.edit_connection(None))
         root.bind("<Control-f>", lambda _e: self.connections_tab.search_entry.focus_set())
         root.after(100, self._drain_events)
+        self.log("TeraLink %s · Python %s%s · 数据目录 %s" % (
+            __version__, sys.version.split()[0], "（Microsoft Store 版）" if is_store_python() else "", data_dir()))
         self.offer_legacy_import(first_run=True)
 
     # ---------- shared helpers ----------
@@ -1065,7 +1068,9 @@ def _open_folder(path: str) -> None:
         os.startfile(path)  # type: ignore[attr-defined]
 
 
-def run(store, data: AppData) -> None:
+def run(store, data: AppData, note: Optional[str] = None) -> None:
     root = tk.Tk()
-    App(root, store, data)
+    app = App(root, store, data)
+    if note:
+        app.log(note)
     root.mainloop()

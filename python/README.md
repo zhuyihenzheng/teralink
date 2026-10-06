@@ -109,6 +109,8 @@
 
 exe 版的数据（`%LOCALAPPDATA%\TeraLink\`）不会被修改。两个版本可以共存。
 
+**Microsoft Store 版 Python**：它会把写入 AppData 的文件重定向到私有目录，Tera Term 和远程桌面都读不到。检测到 Store 版时，数据目录自动改为 `%USERPROFILE%\TeraLinkPy`，并迁移之前保存的数据。执行日志第一行会显示实际的数据目录。也可以用环境变量 `TERALINK_DATA_DIR` 指定任意目录。
+
 ## 安全说明
 
 - 密码不以明文落盘。换电脑或换 Windows 账户后需要重新输入密码。

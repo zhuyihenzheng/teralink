@@ -405,6 +405,37 @@ class MacroReportTests(unittest.TestCase):
             self.assertEqual(teraterm.read_report(path)[1], "started")
 
 
+class StorePythonPathTests(unittest.TestCase):
+    def test_store_python_moves_data_out_of_appdata_and_migrates(self):
+        from unittest import mock
+        from teralink import paths
+        with tempfile.TemporaryDirectory() as folder:
+            local, home = os.path.join(folder, "Local"), os.path.join(folder, "home")
+            old = os.path.join(local, "TeraLinkPy")
+            os.makedirs(old)
+            with open(os.path.join(old, "data.json"), "w") as handle:
+                handle.write("{}")
+            env = {"LOCALAPPDATA": local, "USERPROFILE": home, "HOME": home}
+            with mock.patch.dict(os.environ, env), mock.patch.object(os, "name", "nt"), \
+                    mock.patch.object(sys, "base_prefix",
+                                      r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_x64"), \
+                    mock.patch("os.path.expanduser", lambda p: p.replace("~", home)):
+                os.environ.pop("TERALINK_DATA_DIR", None)
+                self.assertTrue(paths.is_store_python())
+                self.assertEqual(paths.data_dir(), os.path.join(home, "TeraLinkPy"))
+                self.assertIn("迁移", paths.migrate_store_python_data())
+                self.assertTrue(os.path.exists(os.path.join(home, "TeraLinkPy", "data.json")))
+                self.assertIsNone(paths.migrate_store_python_data(), "only once")
+
+    def test_regular_python_unchanged(self):
+        from unittest import mock
+        from teralink import paths
+        with mock.patch.object(os, "name", "nt"), \
+                mock.patch.object(sys, "base_prefix", r"C:\Users\me\AppData\Local\Programs\Python\Python312"), \
+                mock.patch.object(sys, "executable", r"C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe"):
+            self.assertFalse(paths.is_store_python())
+
+
 class RemoteHelperTests(unittest.TestCase):
     def test_fingerprint_and_backup_name(self):
         self.assertTrue(remote.sha256_fingerprint(b"key").startswith("SHA256:"))
