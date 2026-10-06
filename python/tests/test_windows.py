@@ -95,21 +95,71 @@ class RdpLaunchTests(unittest.TestCase):
             self.assertFalse(os.path.exists(args[1]))
 
 
+def _teraterm_path():
+    from teralink import teraterm
+    return os.environ.get("TERALINK_TEST_TERATERM") or teraterm.find_executable()
+
+
 @unittest.skipUnless(WINDOWS, "Windows only")
 class TeraTermDetectionTests(unittest.TestCase):
     def test_find_and_validate_if_installed(self):
         from teralink import teraterm
-        path = teraterm.find_executable()
+        path = _teraterm_path()
         if not path:
             self.skipTest("Tera Term not installed")
-        teraterm.validate_executable(path)
         major = teraterm._file_major_version(path)
-        self.assertGreaterEqual(major, 5)
+        if major is not None and major < 5:
+            with self.assertRaisesRegex(ValueError, "5.x"):
+                teraterm.validate_executable(path)
+            self.skipTest("Tera Term %d.x installed; 5.x is required" % major)
+        teraterm.validate_executable(path)
 
     def test_rejects_other_programs(self):
         from teralink import teraterm
         with self.assertRaises(ValueError):
             teraterm.validate_executable(sys.executable)
+
+
+@unittest.skipUnless(WINDOWS, "Windows only")
+class TeraTermMacroTests(unittest.TestCase):
+    """Real ttpmacro + ttermpro: the macro attaches over DDE and reads the connect command from our pipe.
+
+    The target port is closed, so the login itself fails; what is verified is the secret hand-over.
+    """
+
+    def test_macro_receives_command_through_pipe(self):
+        from teralink import teraterm, vault, winpipe
+        from teralink.model import Connection
+        path = _teraterm_path()
+        if not path or (teraterm._file_major_version(path) or 0) < 5:
+            self.skipTest("Tera Term 5.x not installed")
+        delivered = []
+        original_write = winpipe.SecureOutboundPipe.write
+
+        def recording_write(pipe, payload):
+            delivered.append((pipe.client_pid(), len(payload)))
+            original_write(pipe, payload)
+
+        connection = Connection(name="ci", host="127.0.0.1", port=1, username="deploy",
+                                protected_password=vault.protect("Ci-Pass-123"))
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(os.environ, {"TERALINK_DATA_DIR": folder}), \
+                mock.patch.object(teraterm, "TIMEOUT_SECONDS", 45), \
+                mock.patch.object(winpipe.SecureOutboundPipe, "write", recording_write):
+            started = time.monotonic()
+            try:
+                teraterm.launch(path, connection, threading.Event())
+            except (TimeoutError, OSError) as error:
+                outcome = error  # closed port: login cannot succeed
+            else:
+                outcome = None
+            finally:
+                subprocess.call(["taskkill", "/IM", "ttermpro.exe", "/F"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.assertEqual(len(delivered), 1, "macro never read the connect command (outcome: %r)" % outcome)
+            self.assertGreater(delivered[0][1], 40)
+            self.assertLess(time.monotonic() - started, 60)
+            self.assertEqual(os.listdir(os.path.join(folder, "sessions")), [], "session folder must be removed")
 
 
 @unittest.skipUnless(WINDOWS, "Windows only")

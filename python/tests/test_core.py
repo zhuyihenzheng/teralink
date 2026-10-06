@@ -127,7 +127,7 @@ class RdpTests(unittest.TestCase):
     def test_read_profile_utf16_and_fingerprint(self):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "a.rdp")
-            with open(path, "w", encoding="utf-16") as handle:
+            with open(path, "w", encoding="utf-16", newline="") as handle:
                 handle.write("full address:s:dev.example.com\r\n")
             text = rdp.read_profile(path)
             self.assertEqual(text, "full address:s:dev.example.com\r\n")
