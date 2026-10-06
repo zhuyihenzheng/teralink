@@ -87,6 +87,12 @@ class Widget:
     def winfo_width(self):
         return 800
 
+    def winfo_screenwidth(self):
+        return 1366
+
+    def winfo_screenheight(self):
+        return 768
+
     winfo_height = winfo_rootx = winfo_rooty = winfo_width
 
 

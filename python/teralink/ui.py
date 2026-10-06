@@ -45,8 +45,11 @@ class App:
 
         _setup_fonts(root)
         root.title("TeraLink %s · Tera Term / RDP / 部署脚本" % __version__)
-        root.geometry("1120x760")
-        root.minsize(940, 640)
+        # Fit small laptop screens (1366x768 leaves ~728 px); with DPI awareness these are physical pixels.
+        width = min(1120, root.winfo_screenwidth() - 40)
+        height = min(760, root.winfo_screenheight() - 90)
+        root.geometry("%dx%d+%d+%d" % (width, height, max(0, (root.winfo_screenwidth() - width) // 2), 10))
+        root.minsize(min(900, width), min(560, height))
         style = ttk.Style(root)
         style.configure("Title.TLabel", font=(tkfont.nametofont("TkDefaultFont").actual("family"), 18, "bold"))
         style.configure("Muted.TLabel", foreground="#666666")
@@ -675,8 +678,11 @@ class _Dialog(tk.Toplevel):
         self.withdraw()
         self.title(title)
         self.transient(parent)
-        self.geometry(size)
-        self.minsize(520, 360)
+        width, height = (int(v) for v in size.split("x"))
+        width = min(width, self.winfo_screenwidth() - 40)
+        height = min(height, self.winfo_screenheight() - 90)
+        self.geometry("%dx%d" % (width, height))
+        self.minsize(min(520, width), min(360, height))
         self.result = None
         footer = ttk.Frame(self, padding=(16, 0, 16, 14))
         footer.pack(fill="x", side="bottom")  # packed first so it is never squeezed out
