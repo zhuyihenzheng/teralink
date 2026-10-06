@@ -144,11 +144,12 @@ class Connection:
 
     def macro_payload(self, password: str) -> str:
         """Everything the Tera Term macro reads from the pipe, one item per line: connect command,
-        sudo answer ("1"+password or "0"), the number of after-login commands, then the commands.
-        A count, not an empty-line terminator: TTL filereadln does not return on an empty line."""
+        sudo flag ("1"/"0"), sudo answer (password, or "-"), the number of after-login commands, the commands.
+        Never an empty line (TTL filereadln does not return on one), and simple fields only (no string
+        slicing in TTL)."""
         commands = self.after_login_commands()
-        lines = [self.macro_connect_command(password),
-                 ("1" + password) if self.sudo_auto_password and commands else "0",
+        use_sudo = self.sudo_auto_password and bool(commands)
+        lines = [self.macro_connect_command(password), "1" if use_sudo else "0", password if use_sudo else "-",
                  str(len(commands))] + commands
         return "\r\n".join(lines) + "\r\n"
 

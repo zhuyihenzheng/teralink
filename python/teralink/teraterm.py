@@ -128,42 +128,32 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "filereadln channel command",
            "received = result"]
         + mark("read-sudo")
-        + ["filereadln channel sudoline",
+        + ["filereadln channel sudoflag",
+           "if result <> 0 received = 1",
+           "filereadln channel sudopw",
            "if result <> 0 received = 1"]
         + mark("read-count")
         + ["filereadln channel countline",
-           "if result <> 0 received = 1"]
-        + mark("read-commands")
-        + [
+           "if result <> 0 received = 1",
+           "str2int usesudo sudoflag",
+           "if result = 0 usesudo = 0",
            "str2int ncmds countline",
            "if result = 0 ncmds = 0",
            "if ncmds > %d ncmds = %d" % (MAX_AFTER_LOGIN, MAX_AFTER_LOGIN),
            "if received <> 0 ncmds = 0"]
-        + mark("dbg-count-ok")
+        + mark("read-commands")
         + ["i = 0",
            "while i < ncmds",
            "  filereadln channel line",
            "  cmds[i] = line",
            "  i = i + 1",
-           "endwhile"]
-        + mark("dbg-loop-ok")
-        + ["fileclose channel"]
-        + mark("dbg-closed")
-        + [
-           "line = ''",
-           "if received <> 0 goto failed",
+           "endwhile",
+           "fileclose channel",
+           "line = ''"]
+        + mark("check")
+        + ["if received <> 0 goto failed",
            "strlen command",
-           "if result = 0 goto failed",
-           "strcopy sudoline 1 1 sudoflag"]
-        + mark("dbg-flag")
-        + [
-           "strcmp sudoflag '1'",
-           "if result = 0 then",
-           "  usesudo = 1",
-           "  strlen sudoline",
-           "  strcopy sudoline 2 result sudopw",
-           "endif",
-           "sudoline = ''"]
+           "if result = 0 goto failed"]
         + mark("relink")
         + ["; Recheck after the pipe wait: never launch a fresh process with the secret.",
            "testlink",

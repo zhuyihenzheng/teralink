@@ -72,11 +72,11 @@ class ConnectionTests(unittest.TestCase):
         payload = c.macro_payload("pw")
         lines = payload.split("\r\n")
         self.assertEqual(lines[0], c.macro_connect_command("pw"))
-        self.assertEqual(lines[1:6], ["1pw", "2", "sudo su -", "cd /opt/tomcat/logs", ""])
-        self.assertEqual(make_connection().macro_payload("pw").split("\r\n")[1:4], ["0", "0", ""])
+        self.assertEqual(lines[1:7], ["1", "pw", "2", "sudo su -", "cd /opt/tomcat/logs", ""])
+        self.assertEqual(make_connection().macro_payload("pw").split("\r\n")[1:5], ["0", "-", "0", ""])
+        self.assertNotIn("", lines[:-1], "no empty line before the end")
         plain = make_connection(after_login="ls", sudo_auto_password=False).macro_payload("pw")
-        self.assertEqual(plain.split("\r\n")[1], "0", "password is not sent unless sudo auto-answer is on")
-        self.assertEqual(make_connection().macro_payload("pw").split("\r\n")[1], "0")
+        self.assertEqual(plain.split("\r\n")[1:3], ["0", "-"], "password is not sent unless sudo auto-answer is on")
 
     def test_after_login_limits(self):
         for text in ("x\n" * 21, "a" * 401, "bad\tline"):
@@ -410,7 +410,8 @@ class MacroReportTests(unittest.TestCase):
         self.assertNotIn("sudo su", macro, "commands come through the pipe, never the macro file")
         self.assertIn("sendln sudopw", macro)
         self.assertIn("wait 'assword' 'パスワード' '密码' '$ ' '# '", macro)
-        for stage in ("link", "pipe-open", "pipe-read", "relink", "connect", "connected", "after-login", "done"):
+        for stage in ("link", "pipe-open", "pipe-read", "read-sudo", "read-count", "read-commands", "check", "relink",
+                      "connect", "connected", "after-login", "done"):
             self.assertIn("stage = '%s'" % stage, macro)
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "r.txt")
