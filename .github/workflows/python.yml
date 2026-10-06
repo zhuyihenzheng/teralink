@@ -89,6 +89,9 @@ jobs:
           sudo mkdir -p /run/sshd
           sudo ssh-keygen -A
           sudo /usr/sbin/sshd -p 2222 -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes
+          # sudo that asks for the password, like a typical company server; and a tomcat account for chown
+          echo 'deploy ALL=(ALL) ALL' | sudo tee /etc/sudoers.d/deploy
+          sudo useradd -r tomcat
       - run: python -m pip install -r requirements.txt
       - name: Tests including real SSH / SFTP
         env:

@@ -973,7 +973,8 @@ class StepDialog(_Dialog):
         self.app, self.step = app, step
         self.vars = {name: tk.StringVar(value=getattr(step, name))
                      for name in ("name", "cwd", "source_dir", "output", "excludes", "local", "remote_dir",
-                                  "remote_name")}
+                                  "remote_name", "owner")}
+        self.use_sudo = tk.BooleanVar(value=step.use_sudo)
         self.backup = tk.BooleanVar(value=step.backup)
         self.ignore_error = tk.BooleanVar(value=step.ignore_error)
         self.ssh = [c for c in app.data.connections if c.kind == KIND_SSH]
@@ -1009,11 +1010,17 @@ class StepDialog(_Dialog):
                            "可选，留空沿用本地文件名；例如 myapp.war")
                 self.field("", ttk.Checkbutton(self.body, text="覆盖前把原文件改名备份（.bak-时间）",
                                                variable=self.backup))
+                self.field("", ttk.Checkbutton(self.body, text="用 sudo 放入（目录需要 root 权限时，例如 /opt/tomcat/webapps）",
+                                               variable=self.use_sudo),
+                           "先传到 /tmp 下仅本人可读的临时目录，再用 sudo 移入；sudo 要密码时自动提供登录密码。")
+                self.field("所有者", ttk.Entry(self.body, textvariable=self.vars["owner"]),
+                           "可选，需勾选 sudo，例如 tomcat:tomcat")
             else:
                 self.command = self._text(step.command)
                 self.field("命令", self.command, "通过 SSH 在服务器执行（非登录 shell，环境变量可能比 Tera Term 里少，"
-                                                "需要时写 bash -lc '...'）。需要 sudo 时请用 sudo -n（免密配置），"
-                                                "否则会卡在密码提示。")
+                                                "需要时写 bash -lc '...'）。")
+                self.field("", ttk.Checkbutton(self.body, text="用 sudo 执行（整条命令以 root 运行，sudo 要密码时自动提供登录密码）",
+                                               variable=self.use_sudo))
         self.field("", ttk.Checkbutton(self.body, text="此步失败时继续执行后续步骤", variable=self.ignore_error))
         self.show()
 
@@ -1066,8 +1073,11 @@ class StepDialog(_Dialog):
             values = {name: var.get().strip() for name, var in self.vars.items()}
             connection_id = next((c.id for c in self.ssh if self._label(c) == self.server.get()), "")
             command = self.command.get("1.0", "end-1c").strip() if self.command is not None else ""
+            use_sudo = self.use_sudo.get() and self.step.type in (STEP_UPLOAD, STEP_REMOTE)
+            if not use_sudo:
+                values["owner"] = ""
             self.result = replace(self.step, command=command, connection_id=connection_id, backup=self.backup.get(),
-                                  ignore_error=self.ignore_error.get(), **values).validate()
+                                  ignore_error=self.ignore_error.get(), use_sudo=use_sudo, **values).validate()
             self.destroy()
         except Exception as error:
             messagebox.showerror("无法保存", str(error), parent=self)

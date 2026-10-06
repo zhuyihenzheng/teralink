@@ -287,14 +287,17 @@ class FakeSession(remote.Session):
     def __init__(self, log_calls, fail_command=None):
         self.calls = log_calls
         self.fail_command = fail_command
+        self.sudo = []
         self.closed = False
 
-    def upload(self, local, remote_dir, remote_name, backup, log, cancel):
+    def upload(self, local, remote_dir, remote_name, backup, log, cancel, sudo_password=None, owner=""):
         self.calls.append(("upload", local, remote_dir, remote_name, backup))
+        self.sudo.append(("upload", sudo_password, owner))
         return remote_dir + "/" + (remote_name or os.path.basename(local))
 
-    def run(self, command, log, cancel):
+    def run(self, command, log, cancel, sudo_password=None):
         self.calls.append(("run", command))
+        self.sudo.append(("run", sudo_password))
         return 1 if command == self.fail_command else 0
 
     def close(self):
@@ -353,6 +356,28 @@ class RunnerTests(unittest.TestCase):
         runner, lines = self.runner()
         self.assertFalse(runner.run(Task(name="t", steps=[Step(type=STEP_LOCAL, command="exit 3")])))
         self.assertTrue(any("退出码 3" in line for line in lines))
+
+    def test_sudo_password_only_for_sudo_steps(self):
+        local = os.path.join(self.folder, "a.war")
+        open(local, "w").close()
+        task = Task(name="t", steps=[
+            Step(type=STEP_UPLOAD, connection_id=self.connection.id, local=local, remote_dir="/opt/tomcat/webapps",
+                 use_sudo=True, owner="tomcat:tomcat"),
+            Step(type=STEP_REMOTE, connection_id=self.connection.id, command="ls", use_sudo=True),
+            Step(type=STEP_REMOTE, connection_id=self.connection.id, command="whoami"),
+        ])
+        runner, lines = self.runner()
+        self.assertTrue(runner.run(task), "\n".join(lines))
+        self.assertEqual(self.sessions[0].sudo, [("upload", "secret", "tomcat:tomcat"), ("run", "secret"),
+                                                 ("run", None)])
+        self.assertFalse(any("secret" in line for line in lines), "password never logged")
+
+    def test_owner_requires_sudo(self):
+        with self.assertRaises(ValueError):
+            Step(type=STEP_UPLOAD, connection_id="c", local="a.war", remote_dir="/opt", owner="tomcat").validate()
+        with self.assertRaises(ValueError):
+            Step(type=STEP_UPLOAD, connection_id="c", local="a.war", remote_dir="/opt", use_sudo=True,
+                 owner="tomcat; rm -rf /").validate()
 
     def test_multiline_local_command_stops_at_first_failure(self):
         self.assertEqual(tasks.join_lines("echo a\n\n  exit 3\r\necho never\n"), "echo a && exit 3 && echo never")
@@ -455,6 +480,18 @@ class StorePythonPathTests(unittest.TestCase):
                 mock.patch.object(sys, "base_prefix", r"C:\Users\me\AppData\Local\Programs\Python\Python312"), \
                 mock.patch.object(sys, "executable", r"C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe"):
             self.assertFalse(paths.is_store_python())
+
+
+class SudoScriptTests(unittest.TestCase):
+    def test_wrap_and_install_script_quote_everything(self):
+        self.assertEqual(remote.sudo_wrap("ls -l '/opt/x y'"),
+                         "sudo -S -p '[teralink-sudo-password]' sh -c 'ls -l '\"'\"'/opt/x y'\"'\"''")
+        script = remote.sudo_install_script("/tmp/teralink-1/a b.war", "/tmp/teralink-1", "/opt/tomcat/webapps",
+                                            "a b.war", True, "tomcat:tomcat")
+        self.assertIn("cp '/tmp/teralink-1/a b.war' '/opt/tomcat/webapps/.a b.war.part'", script)
+        self.assertIn("chown tomcat:tomcat '/opt/tomcat/webapps/.a b.war.part'", script)
+        self.assertIn("mv -f '/opt/tomcat/webapps/.a b.war.part' '/opt/tomcat/webapps/a b.war'", script)
+        self.assertTrue(script.startswith("set -e"))
 
 
 class RemoteHelperTests(unittest.TestCase):

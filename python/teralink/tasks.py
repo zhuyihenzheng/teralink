@@ -13,7 +13,7 @@ import zipfile
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
-from . import remote
+from . import remote, vault
 from .model import STEP_LOCAL, STEP_REMOTE, STEP_UPLOAD, STEP_WAR, AppData, Step, Task
 
 Log = Callable[[str], None]
@@ -175,6 +175,12 @@ class Runner:
             self.sessions[connection_id] = self.open_session(connection, self.confirm_host_key, self.log)
         return self.sessions[connection_id]
 
+    def _sudo_password(self, step: Step):
+        if not step.use_sudo:
+            return None
+        connection = self.data.connection(step.connection_id)
+        return vault.unprotect(connection.protected_password) if connection else None
+
     def run(self, task: Task) -> bool:
         task.validate()
         started = time.monotonic()
@@ -233,10 +239,11 @@ class Runner:
             variables["ARTIFACT"] = local
             target = self._session(step.connection_id).upload(
                 local, expand(step.remote_dir, variables), expand(step.remote_name, variables),
-                step.backup, self.log, self.cancel)
+                step.backup, self.log, self.cancel, self._sudo_password(step), step.owner)
             variables["REMOTE_FILE"] = target
         elif step.type == STEP_REMOTE:
-            code = self._session(step.connection_id).run(expand(step.command, variables), self.log, self.cancel)
+            code = self._session(step.connection_id).run(expand(step.command, variables), self.log, self.cancel,
+                                                         self._sudo_password(step))
             if code != 0:
                 raise StepFailed("服务器命令退出码 %d" % code)
 
@@ -248,8 +255,9 @@ def templates(connection_id: str = "") -> Dict[str, Task]:
             Step(type=STEP_LOCAL, name="Maven 打包", command="mvn -q clean package -DskipTests",
                  cwd=r"C:\work\myapp"),
             Step(type=STEP_UPLOAD, name="上传 WAR", connection_id=connection_id, local=r"C:\work\myapp\target\*.war",
-                 remote_dir="/opt/tomcat/webapps", remote_name="myapp.war", backup=True),
-            Step(type=STEP_REMOTE, name="查看部署结果", connection_id=connection_id,
+                 remote_dir="/opt/tomcat/webapps", remote_name="myapp.war", backup=True,
+                 use_sudo=True, owner="tomcat:tomcat"),
+            Step(type=STEP_REMOTE, name="查看部署结果", connection_id=connection_id, use_sudo=True,
                  command="sleep 5; ls -l /opt/tomcat/webapps; tail -n 30 /opt/tomcat/logs/catalina.out"),
         ]),
         "目录打包 WAR 并上传": Task(name="打包 WAR 并上传", steps=[
@@ -262,7 +270,7 @@ def templates(connection_id: str = "") -> Dict[str, Task]:
             Step(type=STEP_LOCAL, name="运行脚本", command=r"call C:\work\scripts\build.bat", cwd=r"C:\work\scripts"),
         ]),
         "服务器命令（重启服务）": Task(name="重启服务", steps=[
-            Step(type=STEP_REMOTE, name="重启", connection_id=connection_id,
-                 command="sudo -n systemctl restart tomcat && systemctl status tomcat --no-pager | head -n 15"),
+            Step(type=STEP_REMOTE, name="重启", connection_id=connection_id, use_sudo=True,
+                 command="systemctl restart tomcat && systemctl status tomcat --no-pager | head -n 15"),
         ]),
     }

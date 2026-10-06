@@ -99,6 +99,59 @@ class RealSshTests(unittest.TestCase):
         finally:
             session.close()
 
+    def test_sudo_command_runs_as_root(self):
+        session = self.session()
+        try:
+            password = vault.unprotect(self.connection.protected_password)
+            code = session.run("whoami; id -u", self.lines.append, threading.Event(), password)
+            self.assertEqual(code, 0, self.lines)
+            text = "\n".join(self.lines)
+            self.assertIn("root", text)
+            self.assertNotIn(password, text)
+            self.assertNotIn("teralink-sudo-password", text, "the prompt marker is hidden from the log")
+        finally:
+            session.close()
+
+    def test_sudo_wrong_password_is_reported_not_retried(self):
+        session = self.session()
+        try:
+            with self.assertRaisesRegex(remote.RemoteError, "sudo"):
+                session.run("sudo -k; whoami", self.lines.append, threading.Event(), "definitely-wrong")
+        finally:
+            session.close()
+
+    def test_command_reading_stdin_does_not_hang(self):
+        session = self.session()
+        try:
+            self.assertEqual(session.run("cat; echo done", self.lines.append, threading.Event()), 0)
+            self.assertIn("done", "\n".join(self.lines))
+        finally:
+            session.close()
+
+    def test_sudo_upload_into_root_owned_dir_with_owner(self):
+        session = self.session()
+        try:
+            password = vault.unprotect(self.connection.protected_password)
+            target_dir = "/opt/teralink-ci/%s/webapps" % os.urandom(4).hex()
+            local = os.path.join(self.data_dir, "app.war")
+            with open(local, "wb") as handle:
+                handle.write(os.urandom(100000))
+            cancel = threading.Event()
+            target = session.upload(local, target_dir, "myapp.war", True, self.lines.append, cancel, password,
+                                    "tomcat:tomcat")
+            session.upload(local, target_dir, "myapp.war", True, self.lines.append, cancel, password,
+                           "tomcat:tomcat")
+            self.lines.clear()
+            session.run("stat -c '%%U:%%G %%a %%s' %s; ls -a %s; ls -ld /opt/teralink-ci; ls /tmp | grep -c teralink- || true"
+                        % (target, target_dir), self.lines.append, cancel)
+            text = "\n".join(self.lines)
+            self.assertIn("tomcat:tomcat 644 100000", text)
+            self.assertIn("myapp.war.bak-", text)
+            self.assertNotIn(".part", text)
+            self.assertTrue(text.strip().endswith("0"), "staging folders in /tmp are removed: %s" % text)
+        finally:
+            session.close()
+
     def test_runner_pipeline_reuses_one_session(self):
         web = os.path.join(self.data_dir, "web", "WEB-INF")
         os.makedirs(web)

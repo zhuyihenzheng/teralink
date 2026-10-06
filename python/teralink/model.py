@@ -174,6 +174,8 @@ class Step:
     remote_dir: str = ""
     remote_name: str = ""
     backup: bool = True
+    use_sudo: bool = False   # upload / remote: run with sudo, answering its prompt with the login password
+    owner: str = ""          # upload with sudo: chown target, e.g. tomcat:tomcat
     # common
     ignore_error: bool = False
 
@@ -197,6 +199,9 @@ class Step:
             validate_remote_name(self.remote_name)
         if self.type == STEP_REMOTE and not self.command.strip():
             raise ValueError("服务器命令不能为空。")
+        if self.owner and (self.type != STEP_UPLOAD or not self.use_sudo
+                           or not re.fullmatch(r"[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?", self.owner)):
+            raise ValueError("所有者需要勾选 sudo，格式为 用户 或 用户:组，例如 tomcat:tomcat。")
         return self
 
     def title(self) -> str:
