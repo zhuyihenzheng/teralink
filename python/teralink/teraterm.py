@@ -177,6 +177,16 @@ def _short_path(path: str) -> str:
     return path
 
 
+def visible_to_other_programs(path: str) -> bool:
+    """True when a separate, non-Python process sees the file (catches AppData redirection)."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        return subprocess.call(["cmd", "/d", "/c", "if exist \"%s\" (exit 0) else (exit 3)" % path],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags) == 0
+    except OSError:
+        return True  # cannot check; let the macro report instead
+
+
 def session_root() -> str:
     """Folder for the macro and its report. TTL file commands fail on non-ASCII paths (e.g. a Japanese or
     Chinese user name in %LOCALAPPDATA%), so fall back to the 8.3 short path, then to ProgramData.
@@ -237,6 +247,10 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
         pipe = winpipe.SecureOutboundPipe(pipe_name)
         pipe.start_accept()
         folder = os.path.dirname(executable)
+        if not visible_to_other_programs(script):
+            raise OSError("Tera Term 看不到 TeraLink 写的宏文件：%s\n\n通常是 Microsoft Store 版 Python 把 AppData "
+                          "重定向到了私有目录。请改用 python.org 的安装包，或设置环境变量 TERALINK_DATA_DIR "
+                          "指向一个普通文件夹（例如 C:\\TeraLinkData）。" % script)
         log("Tera Term：%s（版本 %s）" % (executable, _file_major_version(executable) or "未知"))
         log("宏：%s" % script)
         macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe"), "/V", script], cwd=folder)

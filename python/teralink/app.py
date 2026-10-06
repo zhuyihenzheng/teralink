@@ -53,6 +53,11 @@ def main() -> int:
         return 1
     _enable_dpi_awareness()
     from .model import Store
+    from .paths import migrate_store_python_data
+    try:
+        note = migrate_store_python_data()
+    except OSError as error:
+        note = "无法迁移旧数据：%s" % error
     try:
         store = Store(data_dir())
     except RuntimeError as error:
@@ -65,7 +70,7 @@ def main() -> int:
             _fatal("无法读取数据：%s\n\n数据目录：%s" % (error, data_dir()))
             return 1
         from . import ui
-        ui.run(store, data)
+        ui.run(store, data, note)
         return 0
     except Exception:
         _fatal("TeraLink 意外出错，详情已写入：\n%s" % _write_crash_log())
