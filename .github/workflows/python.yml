@@ -41,6 +41,16 @@ jobs:
         run: python -m pip install --user -r requirements.txt
       - name: Tests (core, UI smoke, Windows-only)
         run: python -m unittest discover -s tests -v
+      - name: Screenshots of the real UI
+        if: matrix.python == '3.12'
+        run: |
+          python -m pip install pillow
+          python tests/screenshot_windows.py screenshots
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: windows-screenshots
+          path: python/screenshots
 
   linux-ssh:
     name: Linux / real sshd
