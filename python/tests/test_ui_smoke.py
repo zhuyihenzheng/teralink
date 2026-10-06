@@ -317,7 +317,7 @@ class UiSmokeTest(unittest.TestCase):
         calls = []
 
         class Session(ui.remote.Session):
-            def run(self, command, log, cancel):
+            def run(self, command, log, cancel, sudo_password=None):
                 calls.append(command)
                 log("Linux fake")
                 return 0

@@ -736,7 +736,7 @@ def _with_button(parent, variable: tk.StringVar, text: str, command: Callable) -
 
 class ConnectionDialog(_Dialog):
     def __init__(self, parent, connection: Optional[Connection]):
-        super().__init__(parent, "新增连接" if connection is None else "编辑连接", "600x640")
+        super().__init__(parent, "新增连接" if connection is None else "编辑连接", "640x760")
         self.original = connection
         c = connection or Connection()
         self.name = tk.StringVar(value=c.name)
@@ -768,6 +768,13 @@ class ConnectionDialog(_Dialog):
         self.field("密码", ttk.Entry(self.body, textvariable=self.password, show="●"),
                    "编辑时留空表示保留原密码" if connection else "")
         self.field("分组", ttk.Entry(self.body, textvariable=self.group), "例如 开发环境 / 生产环境")
+        self.after_login = tk.Text(self.body, height=3, wrap="none", font=("Consolas", 10), **_TEXT_STYLE)
+        self.after_login.insert("1.0", c.after_login)
+        self.field("登录后执行", self.after_login, "仅 SSH。登录成功后依次输入，每行一条，例如：\nsudo su -\ncd /opt/tomcat/logs")
+        self.sudo_auto = tk.BooleanVar(value=c.sudo_auto_password)
+        self.sudo_check = ttk.Checkbutton(self.body, text="遇到 sudo 密码提示时自动输入登录密码（只在出现 Password / パスワード / 密码 提示时发送）",
+                                          variable=self.sudo_auto)
+        self.field("", self.sudo_check)
         self.notes = tk.Text(self.body, height=4, wrap="word", font=_PROSE_FONT, **_TEXT_STYLE)
         self.notes.insert("1.0", c.notes)
         self.field("备注", self.notes)
@@ -790,6 +797,8 @@ class ConnectionDialog(_Dialog):
         self.host_entry.state(["disabled" if use_file else "!disabled"])
         self.port_entry.state(["disabled" if use_file else "!disabled"])
         self.full_screen_check.state(["!disabled" if is_rdp and not use_file else "disabled"])
+        self.after_login.configure(state="disabled" if is_rdp else "normal")
+        self.sudo_check.state(["disabled" if is_rdp else "!disabled"])
 
     def _pick_rdp(self) -> None:
         path = filedialog.askopenfilename(parent=self, filetypes=[("远程桌面连接", "*.rdp")])
@@ -840,7 +849,9 @@ class ConnectionDialog(_Dialog):
                 notes=self.notes.get("1.0", "end-1c").strip(), protected_password=protected,
                 rdp_full_screen=kind == KIND_RDP and not use_file and self.full_screen.get(),
                 rdp_file_path=self.rdp_file.get() if use_file else "",
-                rdp_file_hash=self.rdp_hash if use_file else "", favorite=self.favorite.get())
+                rdp_file_hash=self.rdp_hash if use_file else "", favorite=self.favorite.get(),
+                after_login="" if kind == KIND_RDP else self.after_login.get("1.0", "end-1c").strip(),
+                sudo_auto_password=kind == KIND_SSH and self.sudo_auto.get())
             if use_file:
                 current = rdp.read_profile(result.rdp_file_path)
                 if rdp.fingerprint(current) != result.rdp_file_hash.upper():
@@ -962,7 +973,8 @@ class StepDialog(_Dialog):
         self.app, self.step = app, step
         self.vars = {name: tk.StringVar(value=getattr(step, name))
                      for name in ("name", "cwd", "source_dir", "output", "excludes", "local", "remote_dir",
-                                  "remote_name")}
+                                  "remote_name", "owner")}
+        self.use_sudo = tk.BooleanVar(value=step.use_sudo)
         self.backup = tk.BooleanVar(value=step.backup)
         self.ignore_error = tk.BooleanVar(value=step.ignore_error)
         self.ssh = [c for c in app.data.connections if c.kind == KIND_SSH]
@@ -998,11 +1010,17 @@ class StepDialog(_Dialog):
                            "可选，留空沿用本地文件名；例如 myapp.war")
                 self.field("", ttk.Checkbutton(self.body, text="覆盖前把原文件改名备份（.bak-时间）",
                                                variable=self.backup))
+                self.field("", ttk.Checkbutton(self.body, text="用 sudo 放入（目录需要 root 权限时，例如 /opt/tomcat/webapps）",
+                                               variable=self.use_sudo),
+                           "先传到 /tmp 下仅本人可读的临时目录，再用 sudo 移入；sudo 要密码时自动提供登录密码。")
+                self.field("所有者", ttk.Entry(self.body, textvariable=self.vars["owner"]),
+                           "可选，需勾选 sudo，例如 tomcat:tomcat")
             else:
                 self.command = self._text(step.command)
                 self.field("命令", self.command, "通过 SSH 在服务器执行（非登录 shell，环境变量可能比 Tera Term 里少，"
-                                                "需要时写 bash -lc '...'）。需要 sudo 时请用 sudo -n（免密配置），"
-                                                "否则会卡在密码提示。")
+                                                "需要时写 bash -lc '...'）。")
+                self.field("", ttk.Checkbutton(self.body, text="用 sudo 执行（整条命令以 root 运行，sudo 要密码时自动提供登录密码）",
+                                               variable=self.use_sudo))
         self.field("", ttk.Checkbutton(self.body, text="此步失败时继续执行后续步骤", variable=self.ignore_error))
         self.show()
 
@@ -1055,8 +1073,11 @@ class StepDialog(_Dialog):
             values = {name: var.get().strip() for name, var in self.vars.items()}
             connection_id = next((c.id for c in self.ssh if self._label(c) == self.server.get()), "")
             command = self.command.get("1.0", "end-1c").strip() if self.command is not None else ""
+            use_sudo = self.use_sudo.get() and self.step.type in (STEP_UPLOAD, STEP_REMOTE)
+            if not use_sudo:
+                values["owner"] = ""
             self.result = replace(self.step, command=command, connection_id=connection_id, backup=self.backup.get(),
-                                  ignore_error=self.ignore_error.get(), **values).validate()
+                                  ignore_error=self.ignore_error.get(), use_sudo=use_sudo, **values).validate()
             self.destroy()
         except Exception as error:
             messagebox.showerror("无法保存", str(error), parent=self)

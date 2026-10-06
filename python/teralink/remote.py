@@ -9,6 +9,7 @@ import base64
 import hashlib
 import os
 import posixpath
+import re
 import shlex
 import shutil
 import subprocess
@@ -54,12 +55,40 @@ class RemoteError(Exception):
     pass
 
 
+SUDO_PROMPT = "[teralink-sudo-password]"
+_OWNER_RE = r"^[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?$"
+
+
+def sudo_wrap(command: str) -> str:
+    """sudo reads the password from stdin (-S) and prints a recognisable prompt, so the password is only
+    sent after sudo really asks for it -- never into the command's own stdin."""
+    return "sudo -S -p %s sh -c %s" % (shlex.quote(SUDO_PROMPT), shlex.quote(command))
+
+
+def sudo_install_script(staged: str, staging_dir: str, remote_dir: str, name: str, backup: bool,
+                        owner: str) -> str:
+    q = shlex.quote
+    target = posixpath.join(remote_dir, name)
+    partial = posixpath.join(remote_dir, "." + name + ".part")
+    lines = ["set -e", "mkdir -p %s" % q(remote_dir)]
+    if backup:
+        lines.append("if [ -e %s ]; then mv %s %s; echo backup:%s; fi" % (
+            q(target), q(target), q(posixpath.join(remote_dir, backup_name(name))), backup_name(name)))
+    lines.append("cp %s %s" % (q(staged), q(partial)))
+    if owner:
+        lines.append("chown %s %s" % (q(owner), q(partial)))
+    lines.append("chmod 644 %s" % q(partial))
+    lines.append("mv -f %s %s" % (q(partial), q(target)))
+    lines.append("rm -rf %s" % q(staging_dir))
+    return "; ".join(lines)
+
+
 class Session:
     def upload(self, local: str, remote_dir: str, remote_name: str, backup: bool, log: Log,
-               cancel: threading.Event) -> str:
+               cancel: threading.Event, sudo_password: Optional[str] = None, owner: str = "") -> str:
         raise NotImplementedError
 
-    def run(self, command: str, log: Log, cancel: threading.Event) -> int:
+    def run(self, command: str, log: Log, cancel: threading.Event, sudo_password: Optional[str] = None) -> int:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -138,9 +167,11 @@ class ParamikoSession(Session):
             except IOError:
                 sftp.mkdir(current)
 
-    def upload(self, local, remote_dir, remote_name, backup, log, cancel):
+    def upload(self, local, remote_dir, remote_name, backup, log, cancel, sudo_password=None, owner=""):
         validate_remote_dir(remote_dir)
         name = validate_remote_name(remote_name) or os.path.basename(local)
+        if sudo_password is not None:
+            return self._upload_with_sudo(local, remote_dir, name, backup, log, cancel, sudo_password, owner)
         target = posixpath.join(remote_dir, name)
         partial = posixpath.join(remote_dir, "." + name + ".part")
         sftp = self._sftp_client()
@@ -185,19 +216,67 @@ class ParamikoSession(Session):
         log("  上传完成：%s" % target)
         return target
 
-    def run(self, command, log, cancel):
-        log("$ " + command)
+    def _upload_with_sudo(self, local, remote_dir, name, backup, log, cancel, sudo_password, owner):
+        if owner and not re.match(_OWNER_RE, owner):
+            raise RemoteError("所有者格式应为 用户 或 用户:组，例如 tomcat:tomcat。")
+        sftp = self._sftp_client()
+        staging = "/tmp/teralink-%s" % os.urandom(8).hex()
+        sftp.mkdir(staging, 0o700)  # private to the login user until sudo moves the file
+        staged = posixpath.join(staging, name)
+        total = os.path.getsize(local)
+        state = {"next": 10}
+
+        def progress(sent, _size):
+            if cancel.is_set():
+                raise RemoteError("已停止。")
+            percent = int(sent * 100 / total) if total else 100
+            if percent >= state["next"]:
+                log("  上传 %d%%（%s / %s）" % (percent, _human(sent), _human(total)))
+                state["next"] = (percent // 10 + 1) * 10
+
+        target = posixpath.join(remote_dir, name)
+        log("上传 %s → %s:%s（%s，经 %s 用 sudo 放入）" % (local, self.connection.host, target, _human(total), staging))
+        try:
+            sftp.put(local, staged, callback=progress, confirm=True)
+            code = self.run(sudo_install_script(staged, staging, remote_dir, name, backup, owner),
+                            log, cancel, sudo_password, quiet=True)
+            if code != 0:
+                raise RemoteError("sudo 放入 %s 失败（退出码 %d）。" % (remote_dir, code))
+        finally:
+            for path in (staged, staging):
+                try:
+                    (sftp.remove if path == staged else sftp.rmdir)(path)
+                except IOError:
+                    pass
+        log("  上传完成：%s%s" % (target, "（所有者 %s）" % owner if owner else ""))
+        return target
+
+    def run(self, command, log, cancel, sudo_password=None, quiet=False):
+        if not quiet:
+            log("$ " + ("sudo " if sudo_password is not None else "") + command)
         channel = self.client.get_transport().open_session()
+        asked = 0
         try:
             channel.set_combine_stderr(True)
-            channel.exec_command(command)
+            channel.exec_command(sudo_wrap(command) if sudo_password is not None else command)
+            if sudo_password is None:
+                channel.shutdown_write()  # commands that read stdin get EOF instead of hanging
             pending = b""
+            marker = SUDO_PROMPT.encode()
             while True:
                 if cancel.is_set():
                     channel.close()
                     raise RemoteError("已停止。")
                 if channel.recv_ready():
                     pending += channel.recv(65536)
+                    if sudo_password is not None and marker in pending:
+                        pending = pending.replace(marker, b"")
+                        asked += 1
+                        if asked > 1:  # sudo asks again: wrong password; never retry automatically
+                            channel.close()
+                            raise RemoteError("sudo 拒绝了登录密码（密码不对，或该用户没有 sudo 权限）。")
+                        channel.sendall((sudo_password + "\n").encode("utf-8"))
+                        channel.shutdown_write()
                     *lines, pending = pending.split(b"\n")
                     for line in lines:
                         log("  " + line.decode("utf-8", "replace").rstrip("\r"))
@@ -255,7 +334,9 @@ class OpenSshSession(Session):
                 process.stdout.close()
         return process.returncode
 
-    def upload(self, local, remote_dir, remote_name, backup, log, cancel):
+    def upload(self, local, remote_dir, remote_name, backup, log, cancel, sudo_password=None, owner=""):
+        if sudo_password is not None:
+            raise RemoteError("sudo 步骤需要 paramiko，请先运行 install-deps.bat。")
         validate_remote_dir(remote_dir)
         name = validate_remote_name(remote_name) or os.path.basename(local)
         target = posixpath.join(remote_dir, name)
@@ -276,7 +357,9 @@ class OpenSshSession(Session):
         log("  上传完成：%s" % target)
         return target
 
-    def run(self, command, log, cancel):
+    def run(self, command, log, cancel, sudo_password=None):
+        if sudo_password is not None:
+            raise RemoteError("sudo 步骤需要 paramiko，请先运行 install-deps.bat。")
         log("$ " + command)
         return self._exec(["ssh"] + self._options("-p") + [self._target(), command], log, cancel)
 

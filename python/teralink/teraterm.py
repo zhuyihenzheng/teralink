@@ -15,7 +15,7 @@ import time
 from typing import Callable, Optional
 
 from . import vault
-from .model import Connection
+from .model import MAX_AFTER_LOGIN, Connection
 from .paths import data_dir
 
 TIMEOUT_SECONDS = 120
@@ -83,6 +83,7 @@ STAGE_HINTS = {
     "pipe-read": "宏没有从管道读到连接信息。",
     "relink": "读取连接信息后，宏与 Tera Term 的连接断开了。",
     "connect": "Tera Term 已收到登录信息，但连接未完成：请在 Tera Term 窗口查看网络、指纹或认证提示。",
+    "after-login": "已登录，但执行登录后命令时中断，请在 Tera Term 窗口查看。",
 }
 
 
@@ -120,10 +121,37 @@ def create_macro(pipe_name: str, report_path: str) -> str:
         + ["fileopen channel '\\\\.\\pipe\\%s' 0 1" % pipe_name,
            "if channel = -1 goto failed"]
         + mark("pipe-read")
-        + ["filereadln channel command",
-           "received = result",
+        + ["strdim cmds %d" % MAX_AFTER_LOGIN,
+           "ncmds = 0",
+           "usesudo = 0",
+           "sudopw = ''",
+           "filereadln channel command",
+           "received = result"]
+        + mark("read-sudo")
+        + ["filereadln channel sudoflag",
+           "if result <> 0 received = 1",
+           "filereadln channel sudopw",
+           "if result <> 0 received = 1"]
+        + mark("read-count")
+        + ["filereadln channel countline",
+           "if result <> 0 received = 1",
+           "str2int usesudo sudoflag",
+           "if result = 0 usesudo = 0",
+           "str2int ncmds countline",
+           "if result = 0 ncmds = 0",
+           "if ncmds > %d ncmds = %d" % (MAX_AFTER_LOGIN, MAX_AFTER_LOGIN),
+           "if received <> 0 ncmds = 0"]
+        + mark("read-commands")
+        + ["i = 0",
+           "while i < ncmds",
+           "  filereadln channel line",
+           "  cmds[i] = line",
+           "  i = i + 1",
+           "endwhile",
            "fileclose channel",
-           "if received <> 0 goto failed",
+           "line = ''"]
+        + mark("check")
+        + ["if received <> 0 goto failed",
            "strlen command",
            "if result = 0 goto failed"]
         + mark("relink")
@@ -135,9 +163,38 @@ def create_macro(pipe_name: str, report_path: str) -> str:
            "command = ''",
            "if result <> 2 goto failed"]
         + mark("connected")
-        + ["end",
+        + ["if ncmds = 0 goto finish"]
+        + mark("after-login")
+        + ["; Type the after-login commands. The sudo password is sent ONLY when a password prompt is seen.",
+           "timeout = 20",
+           "wait '$ ' '# ' '> '",
+           "i = 0",
+           "while i < ncmds",
+           "  sendln cmds[i]",
+           "  if usesudo = 1 then",
+           "    strscan cmds[i] 'sudo'",
+           "    if result > 0 then",
+           "      timeout = 10",
+           "      wait 'assword' 'パスワード' '密码' '$ ' '# '",
+           "      if result >= 1 then",
+           "        if result <= 3 then",
+           "          sendln sudopw",
+           "        endif",
+           "      endif",
+           "    endif",
+           "  endif",
+           "  timeout = 20",
+           "  wait '$ ' '# ' '> '",
+           "  i = i + 1",
+           "endwhile",
+           "timeout = 0"]
+        + mark("done")
+        + [":finish",
+           "sudopw = ''",
+           "end",
            ":failed",
            "command = ''",
+           "sudopw = ''",
            "strconcat stage ':failed'",
            "fileopen report %s 1" % report,
            "if report <> -1 then",
@@ -160,10 +217,10 @@ def read_report(path: str):
     return lines, last.replace(":failed", "")
 
 
-def _failure(message: str, lines, last: str, session: str) -> OSError:
+def _failure(message: str, lines, last: str, session: str, kind=OSError) -> OSError:
     hint = STAGE_HINTS.get(last, "")
     detail = "宏进度：%s" % (" → ".join(lines) if lines else "（没有任何记录）")
-    return OSError("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
+    return kind("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
 
 
 def _short_path(path: str) -> str:
@@ -232,9 +289,10 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
     connection.validate()
     cleanup_sessions()
     password = vault.unprotect(connection.protected_password)
-    payload = bytearray((connection.macro_connect_command(password) + "\r\n").encode("utf-8"))
+    payload = bytearray(connection.macro_payload(password).encode("utf-8"))
     password = ""
     session = os.path.join(session_root(), os.urandom(16).hex())
+    report = ""
     macro = None
     pipe = None
     succeeded = False
@@ -255,7 +313,8 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
                           "指向一个普通文件夹（例如 C:\\TeraLinkData）。" % script)
         log("Tera Term：%s（版本 %s）" % (executable, _file_major_version(executable) or "未知"))
         log("宏：%s" % script)
-        macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe"), "/V", script], cwd=folder)
+        hidden = [] if os.environ.get("TERALINK_MACRO_VISIBLE") == "1" else ["/V"]  # visible: for debugging
+        macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe")] + hidden + [script], cwd=folder)
 
         while not pipe.connected.is_set():
             _check(cancel, deadline)
@@ -271,14 +330,26 @@ def launch(executable: str, connection: Connection, cancel: threading.Event,
         _check(cancel, deadline)
         pipe.write(payload)
         log("连接信息已通过本机管道交给宏。")
+        commands = connection.after_login_commands()
+        if commands:
+            log("登录后将依次执行 %d 条命令%s。" % (len(commands), "（sudo 密码提示时自动输入）"
+                                                 if connection.sudo_auto_password else ""))
+        if commands:  # each after-login command may wait up to ~30 s for its prompt
+            deadline = max(deadline, time.monotonic() + 60 + 30 * len(commands))
         while macro.poll() is None:
             _check(cancel, deadline)
             time.sleep(0.1)
         lines, last = read_report(report)
         log("宏结束，退出码 %s，进度：%s" % (macro.returncode, lines))
-        if last != "connected":
+        if "connected" not in lines:
             raise _failure("Tera Term 未完成自动连接。错误密码不会被自动重复提交。", lines, last, session)
         succeeded = True
+    except (TimeoutError, Cancelled) as error:
+        lines, last = read_report(report) if report else ([], "")
+        log("宏进度：%s" % (lines or "无"))
+        if isinstance(error, TimeoutError):
+            raise _failure(str(error), lines, last, session, TimeoutError)
+        raise
     finally:
         for index in range(len(payload)):
             payload[index] = 0

@@ -30,6 +30,7 @@ STEP_LABELS = {
 }
 
 DATA_VERSION = 1
+MAX_AFTER_LOGIN = 20
 _HOST_RE = re.compile(r"^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.?$")
 
 
@@ -88,6 +89,11 @@ class Connection:
     rdp_file_hash: str = ""
     favorite: bool = False
     last_launched: str = ""
+    after_login: str = ""          # SSH: commands typed into Tera Term after login, one per line
+    sudo_auto_password: bool = False  # answer sudo's password prompt with the login password
+
+    def after_login_commands(self) -> List[str]:
+        return [line.strip() for line in self.after_login.splitlines() if line.strip()]
 
     def validate(self) -> "Connection":
         if not re.fullmatch(r"[0-9a-f]{32}", self.id or ""):
@@ -108,6 +114,9 @@ class Connection:
             raise ValueError("请输入有效的用户名（最多 255 字）。")
         if len(self.group) > 100 or len(self.notes) > 2000:
             raise ValueError("分组最多 100 字，备注最多 2000 字。")
+        commands = self.after_login_commands()
+        if len(commands) > MAX_AFTER_LOGIN or any(_has_control(c) or len(c.encode("utf-8")) > 400 for c in commands):
+            raise ValueError("登录后命令最多 %d 行，每行最多 400 字节，不能包含控制字符。" % MAX_AFTER_LOGIN)
         if not self.protected_password or len(self.protected_password) > 32768:
             raise ValueError("请保存登录密码。")
         if not re.fullmatch(r"[A-Za-z0-9+/=]+", self.protected_password):
@@ -133,6 +142,17 @@ class Connection:
             raise ValueError("连接信息过长：Tera Term 宏的连接参数最多 511 个 UTF-8 字节，请缩短主机名、用户名或密码。")
         return command
 
+    def macro_payload(self, password: str) -> str:
+        """Everything the Tera Term macro reads from the pipe, one item per line: connect command,
+        sudo flag ("1"/"0"), sudo answer (password, or "-"), the number of after-login commands, the commands.
+        Never an empty line (TTL filereadln does not return on one), and simple fields only (no string
+        slicing in TTL)."""
+        commands = self.after_login_commands()
+        use_sudo = self.sudo_auto_password and bool(commands)
+        lines = [self.macro_connect_command(password), "1" if use_sudo else "0", password if use_sudo else "-",
+                 str(len(commands))] + commands
+        return "\r\n".join(lines) + "\r\n"
+
     def search_text(self) -> str:
         return "\n".join([self.name, self.host, self.username, self.group, self.kind]).lower()
 
@@ -154,6 +174,8 @@ class Step:
     remote_dir: str = ""
     remote_name: str = ""
     backup: bool = True
+    use_sudo: bool = False   # upload / remote: run with sudo, answering its prompt with the login password
+    owner: str = ""          # upload with sudo: chown target, e.g. tomcat:tomcat
     # common
     ignore_error: bool = False
 
@@ -177,6 +199,9 @@ class Step:
             validate_remote_name(self.remote_name)
         if self.type == STEP_REMOTE and not self.command.strip():
             raise ValueError("服务器命令不能为空。")
+        if self.owner and (self.type != STEP_UPLOAD or not self.use_sudo
+                           or not re.fullmatch(r"[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?", self.owner)):
+            raise ValueError("所有者需要勾选 sudo，格式为 用户 或 用户:组，例如 tomcat:tomcat。")
         return self
 
     def title(self) -> str:
