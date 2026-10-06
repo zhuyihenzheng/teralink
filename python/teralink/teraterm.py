@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from . import vault
 from .model import Connection
@@ -74,48 +74,115 @@ def _file_major_version(path: str) -> Optional[int]:
         return None
 
 
+# What the macro reports as its last stage, and what that means for the user.
+STAGE_HINTS = {
+    "": "宏根本没有运行：ttpmacro.exe 可能被安全软件拦截，或宏文件所在路径无法读取。",
+    "started": "宏已启动，但没有走到打开 Tera Term 这一步。",
+    "link": "宏没能打开 Tera Term 或与它建立 DDE 连接：ttermpro.exe 可能被安全软件拦截，或 Tera Term 启动时弹出了对话框。",
+    "pipe-open": "宏打不开本机管道（\\\\.\\pipe\\TeraLink-…），可能被安全软件拦截。",
+    "pipe-read": "宏没有从管道读到连接信息。",
+    "relink": "读取连接信息后，宏与 Tera Term 的连接断开了。",
+    "connect": "Tera Term 已收到登录信息，但连接未完成：请在 Tera Term 窗口查看网络、指纹或认证提示。",
+}
+
+
 def create_macro(pipe_name: str, report_path: str) -> str:
+    """The macro appends one line per stage to report_path, so a failure says where it stopped."""
     # Windows paths cannot contain double quotes; TTL does not treat backslashes as escapes.
     if ('"' in report_path or any(ord(c) < 32 for c in report_path)
             or not re.fullmatch(r"TeraLink-[a-f0-9]{32}", pipe_name)):
         raise ValueError("宏路径无效。")
-    return "\n".join([
-        "; TeraLink transport. This file contains NO password or connection credentials.",
-        "; Attach before receiving secrets: connect will use DDE, not process arguments.",
-        "connect '/DS'",
-        "testlink",
-        "if result <> 1 goto failed",
-        "fileopen channel '\\\\.\\pipe\\%s' 0 1" % pipe_name,
-        "if channel = -1 goto failed",
-        "filereadln channel command",
-        "received = result",
-        "fileclose channel",
-        "if received <> 0 goto failed",
-        "strlen command",
-        "if result = 0 goto failed",
-        "; Recheck after the pipe wait: never launch a fresh process with the secret.",
-        "testlink",
-        "if result <> 1 goto failed",
-        "connect command",
-        "command = ''",
-        "if result <> 2 goto failed",
-        'fileopen report "%s" 0' % report_path,
-        "if report = -1 end",
-        "filewriteln report 'connected'",
-        "fileclose report",
-        "end",
-        ":failed",
-        "command = ''",
-        'fileopen report "%s" 0' % report_path,
-        "if report = -1 end",
-        "filewriteln report 'failed'",
-        "fileclose report",
-        "end",
-        "",
-    ])
+    report = '"%s"' % report_path
+
+    def mark(stage: str):
+        return ["stage = '%s'" % stage,
+                "fileopen report %s 1" % report,
+                "if report <> -1 then",
+                "  filewriteln report stage",
+                "  fileclose report",
+                "endif"]
+
+    return "\n".join(
+        ["; TeraLink transport. This file contains NO password or connection credentials.",
+         "; Attach before receiving secrets: connect will use DDE, not process arguments.",
+         "getver version",
+         "fileopen report %s 0" % report,
+         "if report <> -1 then",
+         "  strconcat version ' started'",
+         "  filewriteln report version",
+         "  fileclose report",
+         "endif"]
+        + mark("link")
+        + ["connect '/DS'",
+           "testlink",
+           "if result <> 1 goto failed"]
+        + mark("pipe-open")
+        + ["fileopen channel '\\\\.\\pipe\\%s' 0 1" % pipe_name,
+           "if channel = -1 goto failed"]
+        + mark("pipe-read")
+        + ["filereadln channel command",
+           "received = result",
+           "fileclose channel",
+           "if received <> 0 goto failed",
+           "strlen command",
+           "if result = 0 goto failed"]
+        + mark("relink")
+        + ["; Recheck after the pipe wait: never launch a fresh process with the secret.",
+           "testlink",
+           "if result <> 1 goto failed"]
+        + mark("connect")
+        + ["connect command",
+           "command = ''",
+           "if result <> 2 goto failed"]
+        + mark("connected")
+        + ["end",
+           ":failed",
+           "command = ''",
+           "strconcat stage ':failed'",
+           "fileopen report %s 1" % report,
+           "if report <> -1 then",
+           "  filewriteln report stage",
+           "  fileclose report",
+           "endif",
+           "end",
+           ""])
 
 
-def launch(executable: str, connection: Connection, cancel: threading.Event) -> None:
+def read_report(path: str):
+    """Returns (stages written by the macro, last stage without the ':failed' suffix)."""
+    lines = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    last = lines[-1] if lines else ""
+    if last.endswith(" started"):
+        last = "started"
+    return lines, last.replace(":failed", "")
+
+
+def _failure(message: str, lines, last: str, session: str) -> OSError:
+    hint = STAGE_HINTS.get(last, "")
+    detail = "宏进度：%s" % (" → ".join(lines) if lines else "（没有任何记录）")
+    return OSError("%s\n\n%s\n%s\n\n诊断文件（不含密码）：%s" % (message, hint, detail, session))
+
+
+def cleanup_sessions(max_age_seconds: float = 7 * 86400) -> None:
+    """Failed launches keep their (credential-free) folder for diagnosis; drop old ones."""
+    root = os.path.join(data_dir(), "sessions")
+    if not os.path.isdir(root):
+        return
+    now = time.time()
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        try:
+            if now - os.path.getmtime(path) > max_age_seconds:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def launch(executable: str, connection: Connection, cancel: threading.Event,
+           log: Callable[[str], None] = lambda line: None) -> None:
     """Blocking. Run in a worker thread; set `cancel` to stop waiting (the terminal stays open)."""
     if os.name != "nt":
         raise OSError("Tera Term 只能在 Windows 上启动。")
@@ -123,12 +190,14 @@ def launch(executable: str, connection: Connection, cancel: threading.Event) -> 
 
     validate_executable(executable)
     connection.validate()
+    cleanup_sessions()
     password = vault.unprotect(connection.protected_password)
     payload = bytearray((connection.macro_connect_command(password) + "\r\n").encode("utf-8"))
     password = ""
     session = os.path.join(data_dir(), "sessions", os.urandom(16).hex())
     macro = None
     pipe = None
+    succeeded = False
     deadline = time.monotonic() + TIMEOUT_SECONDS
     try:
         os.makedirs(session)
@@ -140,12 +209,16 @@ def launch(executable: str, connection: Connection, cancel: threading.Event) -> 
         pipe = winpipe.SecureOutboundPipe(pipe_name)
         pipe.start_accept()
         folder = os.path.dirname(executable)
+        log("Tera Term：%s（版本 %s）" % (executable, _file_major_version(executable) or "未知"))
+        log("宏：%s" % script)
         macro = subprocess.Popen([os.path.join(folder, "ttpmacro.exe"), "/V", script], cwd=folder)
 
         while not pipe.connected.is_set():
             _check(cancel, deadline)
             if macro.poll() is not None:
-                raise OSError("Tera Term 宏在接收连接信息前退出，请检查安装是否完整。")
+                lines, last = read_report(report)
+                log("宏提前退出，退出码 %s，进度：%s" % (macro.returncode, lines or "无"))
+                raise _failure("Tera Term 宏在接收连接信息前退出。", lines, last, session)
             pipe.connected.wait(0.1)
         if pipe.error:
             raise pipe.error
@@ -153,15 +226,15 @@ def launch(executable: str, connection: Connection, cancel: threading.Event) -> 
             raise OSError("接收端不是本次启动的 Tera Term 宏，已停止传递密码。")
         _check(cancel, deadline)
         pipe.write(payload)
+        log("连接信息已通过本机管道交给宏。")
         while macro.poll() is None:
             _check(cancel, deadline)
             time.sleep(0.1)
-        result = ""
-        if os.path.exists(report):
-            with open(report, "r", encoding="utf-8", errors="replace") as handle:
-                result = handle.read().strip()
-        if result != "connected":
-            raise OSError("Tera Term 未完成自动连接。请在终端查看网络、认证或主机指纹提示；错误密码不会被自动重复提交。")
+        lines, last = read_report(report)
+        log("宏结束，退出码 %s，进度：%s" % (macro.returncode, lines))
+        if last != "connected":
+            raise _failure("Tera Term 未完成自动连接。错误密码不会被自动重复提交。", lines, last, session)
+        succeeded = True
     finally:
         for index in range(len(payload)):
             payload[index] = 0
@@ -173,7 +246,8 @@ def launch(executable: str, connection: Connection, cancel: threading.Event) -> 
                 macro.kill()
             except OSError:
                 pass
-        shutil.rmtree(session, ignore_errors=True)  # Residue holds only paths and status, never credentials.
+        if succeeded:
+            shutil.rmtree(session, ignore_errors=True)
 
 
 def _check(cancel: threading.Event, deadline: float) -> None:
